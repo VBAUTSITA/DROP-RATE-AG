@@ -18,6 +18,12 @@ public interface DropRateAgent {
         - When the user asks which cells are available, call listAllCells.
         - When the user asks which cells are worst or most problematic,
           call getWorstCells.
+        - After identifying the dominant cause with getCellDropSummary, ALWAYS
+          call getKnowledgeForCause to retrieve the expert explanation and
+          tuning guidance for that cause.
+        - Combine the data from getCellDropSummary and the knowledge from
+          getKnowledgeForCause into a single coherent explanation: what is
+          happening, why it happens, and what parameters or features to check.
         - Always explain what the dominant cause means in plain language
           after reporting it.
         - If drop rate is CRITICAL (>15%), always suggest checking the

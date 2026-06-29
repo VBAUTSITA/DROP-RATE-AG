@@ -1,11 +1,19 @@
 package com.ranadvisor.drops;
 
 import dev.langchain4j.agent.tool.Tool;
+import dev.langchain4j.data.embedding.Embedding;
+import dev.langchain4j.data.segment.TextSegment;
+import dev.langchain4j.model.embedding.EmbeddingModel;
+import dev.langchain4j.store.embedding.EmbeddingMatch;
+import dev.langchain4j.store.embedding.EmbeddingSearchRequest;
+import dev.langchain4j.store.embedding.EmbeddingStore;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import com.ranadvisor.drops.entity.NrCellDrops;
 import com.ranadvisor.drops.repository.NrCellDropsRepository;
+import com.ranadvisor.logging.AgentLog;
+import com.ranadvisor.logging.AgentLogRepository;
 
 import java.util.Comparator;
 import java.util.List;
@@ -17,26 +25,41 @@ public class DropAnalysisTool {
     @Autowired
     private NrCellDropsRepository dropsRepo;
 
+    @Autowired
+    private AgentLogRepository logRepo;
+
+    @Autowired(required = false)
+    private EmbeddingModel embeddingModel;
+
+    @Autowired(required = false)
+    private EmbeddingStore<TextSegment> embeddingStore;
+
+    // ─── existing tools (unchanged logic, timing + log wrapper added) ─────────
+
     @Tool("Get drop rate summary for a specific 5G NSA cell by cell name. Use this when the user asks about drops, call drops, or retainability for a specific cell.")
     public String getCellDropSummary(String cellName) {
+        long start = System.currentTimeMillis();
         List<NrCellDrops> rows = dropsRepo.findByCellNameOrderBySampleTimeAsc(cellName);
-        if (rows.isEmpty()) {
-            return "Cell not found: " + cellName;
-        }
-        return buildSummary(cellName, rows);
+        String result = rows.isEmpty() ? "Cell not found: " + cellName : buildSummary(cellName, rows);
+        log("getCellDropSummary", cellName, result, start);
+        return result;
     }
 
     @Tool("List all available 5G NSA cells in the database. Use this when the user asks which cells are available, or before analyzing all cells.")
     public String listAllCells() {
+        long start = System.currentTimeMillis();
         List<String> cells = dropsRepo.findDistinctCellNames();
         StringBuilder sb = new StringBuilder();
         sb.append("Available cells (").append(cells.size()).append("):\n");
         sb.append(String.join("\n", cells));
-        return sb.toString();
+        String result = sb.toString();
+        log("listAllCells", "(none)", result, start);
+        return result;
     }
 
     @Tool("Return the N cells with the highest drop rates. Use when the user asks which cells are worst, most problematic, or have the highest drops.")
     public String getWorstCells(int topN) {
+        long start = System.currentTimeMillis();
         int cap = Math.min(topN, 10);
         List<String> cells = dropsRepo.findDistinctCellNames();
 
@@ -57,8 +80,73 @@ public class DropAnalysisTool {
             sb.append(String.format("%d. %s  Drop Rate: %.2f%%  Dominant: %s%n",
                 i + 1, r.cellName(), r.dropRate(), r.dominantLabel()));
         }
-        return sb.toString();
+        String result = sb.toString();
+        log("getWorstCells", "topN=" + topN, result, start);
+        return result;
     }
+
+    // ─── RAG tool ─────────────────────────────────────────────────────────────
+
+    @Tool("Retrieve expert knowledge about a 5G NSA drop root cause. Use this AFTER getCellDropSummary identifies the dominant cause, to explain what it means and what to tune to fix it. Pass the cause name as the query, e.g. 'T310Expiry root cause and fix' or 'RA Problem RACH failure troubleshooting'.")
+    public String getKnowledgeForCause(String query) {
+        long start = System.currentTimeMillis();
+
+        if (embeddingModel == null || embeddingStore == null) {
+            String msg = "Knowledge base not available (RAG not configured — pgvector setup required).";
+            log("getKnowledgeForCause", query, msg, start);
+            return msg;
+        }
+
+        try {
+            Embedding queryEmbedding = embeddingModel.embed(query).content();
+            List<EmbeddingMatch<TextSegment>> matches = embeddingStore.search(
+                EmbeddingSearchRequest.builder()
+                    .queryEmbedding(queryEmbedding)
+                    .maxResults(2)
+                    .build()
+            ).matches();
+
+            if (matches.isEmpty()) {
+                String msg = "No relevant knowledge found for: " + query;
+                log("getKnowledgeForCause", query, msg, start);
+                return msg;
+            }
+
+            StringBuilder sb = new StringBuilder();
+            sb.append("Knowledge base findings for '").append(query).append("':\n\n");
+            for (EmbeddingMatch<TextSegment> match : matches) {
+                sb.append(match.embedded().text()).append("\n\n---\n\n");
+            }
+
+            String result = sb.toString();
+            log("getKnowledgeForCause", query, result.substring(0, Math.min(300, result.length())), start);
+            return result;
+        } catch (Exception e) {
+            String msg = "Knowledge retrieval error: " + e.getMessage();
+            log("getKnowledgeForCause", query, msg, start);
+            return msg;
+        }
+    }
+
+    // ─── logging helper ───────────────────────────────────────────────────────
+
+    private void log(String tool, String input, String output, long startMs) {
+        try {
+            AgentLog entry = new AgentLog();
+            entry.setAgentName("drops");
+            entry.setToolCalled(tool);
+            entry.setToolInput(input);
+            entry.setToolOutput(output != null && output.length() > 2000
+                ? output.substring(0, 2000) + "...[truncated]"
+                : output);
+            entry.setLatencyMs(System.currentTimeMillis() - startMs);
+            logRepo.save(entry);
+        } catch (Exception e) {
+            System.err.println("[DropAnalysisTool] Failed to save log entry: " + e.getMessage());
+        }
+    }
+
+    // ─── internal helpers (unchanged) ─────────────────────────────────────────
 
     private record CellRate(String cellName, double dropRate, String dominantLabel) {}
 

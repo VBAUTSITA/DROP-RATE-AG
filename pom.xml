@@ -72,6 +72,12 @@
 			<artifactId>langchain4j-spring-boot-starter</artifactId>
 		</dependency>
 
+		<!-- LangChain4j pgvector embedding store (RAG) -->
+		<dependency>
+			<groupId>dev.langchain4j</groupId>
+			<artifactId>langchain4j-pgvector</artifactId>
+		</dependency>
+
 		<!-- Test -->
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
