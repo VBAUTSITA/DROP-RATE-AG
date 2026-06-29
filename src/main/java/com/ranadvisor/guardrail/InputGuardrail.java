@@ -9,8 +9,6 @@ import java.util.regex.Pattern;
 @Component
 public class InputGuardrail {
 
-    public record GuardrailResult(boolean allowed, String reason) {}
-
     private static final int MIN_LENGTH = 2;
     private static final int MAX_LENGTH = 1000;
 
