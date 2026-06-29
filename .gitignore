@@ -34,3 +34,6 @@ build/
 
 ### Secrets ###
 src/main/resources/application.properties
+
+### Claude Code local state ###
+.claude/

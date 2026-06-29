@@ -5,22 +5,33 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Chat Console — RAN Advisor</title>
 <link rel="stylesheet" href="style.css">
+<style>
+  /* scoped to the new agent selector only; style.css itself is untouched */
+  #agent-select {
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 12px 14px;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    width: 100%;
+  }
+  #agent-select:focus { outline: none; border-color: var(--accent); }
+</style>
 </head>
 <body>
 <div class="container">
   <a class="back-link" href="index.html">&larr; Back to console</a>
   <h1>Chat Console</h1>
-  <p class="subtitle">
-    <span class="badge badge-get">GET</span> <code>/ai/chat?message=...</code> &middot; backed by
-    <code>ChatService</code> — plain LLM, no tools, no memory.
-  </p>
+  <p class="subtitle">Pick a backend below, then chat with it.</p>
 
-  <div class="note">
-    This box talks only to the plain chat endpoint. The tool-using <code>TelecomAgent</code>
-    lives behind <span class="badge badge-post">POST</span> <code>/agent/telecom</code> and needs
-    a JSON body, so it isn't wired up here — see the
-    <a href="reference.html">Reference Guide</a> for a ready-to-run curl example.
+  <div class="chat-input-row">
+    <select id="agent-select">
+      <option value="plain">Plain LLM</option>
+      <option value="drops" selected>Drop Rate Agent</option>
+    </select>
   </div>
+  <p id="agent-desc" class="note"></p>
 
   <div id="chat-window" class="chat-window"></div>
 
@@ -31,9 +42,30 @@
 </div>
 
 <script>
+  const AGENTS = {
+    plain: {
+      label: 'Plain LLM',
+      url: '/ai/chat',
+      desc: 'Plain LLM — ChatService, no tools, no database access. Generic chit-chat only; it knows nothing about your cells.'
+    },
+    drops: {
+      label: 'Drop Rate Agent',
+      url: '/agent/drops',
+      desc: 'Drop Rate Agent — queries real 5G NSA drop data for 29 cells. Try: "analiza la celda ARR38551C1_Parra" or "cual es la peor celda".'
+    }
+  };
+
+  const agentSelect = document.getElementById('agent-select');
+  const agentDesc = document.getElementById('agent-desc');
   const chatWindow = document.getElementById('chat-window');
   const input = document.getElementById('message-input');
   const sendBtn = document.getElementById('send-btn');
+
+  function updateAgentDesc() {
+    agentDesc.textContent = AGENTS[agentSelect.value].desc;
+  }
+  agentSelect.addEventListener('change', updateAgentDesc);
+  updateAgentDesc();
 
   function addBubble(text, kind) {
     const div = document.createElement('div');
@@ -47,13 +79,14 @@
     const text = input.value.trim();
     if (!text) return;
 
+    const agent = AGENTS[agentSelect.value];
     addBubble(text, 'user');
     input.value = '';
     input.disabled = true;
     sendBtn.disabled = true;
 
     try {
-      const res = await fetch('/ai/chat?message=' + encodeURIComponent(text));
+      const res = await fetch(agent.url + '?message=' + encodeURIComponent(text));
       if (!res.ok) {
         addBubble('Request failed: HTTP ' + res.status + ' ' + res.statusText, 'error');
       } else {

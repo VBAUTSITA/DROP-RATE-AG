@@ -13,7 +13,7 @@
   <p class="subtitle">What's actually running in this codebase, explained from the real source files.</p>
 
   <div class="note">
-    This app currently contains <strong>two separate AI integrations</strong> that look similar
+    This app currently contains <strong>three separate AI integrations</strong> that look similar
     from the outside but work completely differently underneath. Telling them apart is the
     fastest way to understand AI agents in general.
   </div>
@@ -161,14 +161,47 @@ public class AiConfig {
 
   <p>Exposed at: <span class="badge badge-post">POST</span> <code>/agent/telecom</code></p>
 
-  <h2>3. Calling it from outside</h2>
+  <h2>3. Drop Rate Agent — <code>DropRateAgent</code></h2>
+  <p>
+    A second tool-using agent, built the same way as <code>TelecomAgent</code> but scoped to a
+    single job: call drop and retainability analysis on the <code>nr_cell_drops</code> table
+    (~18,800 hourly samples across 29 5G NSA cells). Same pattern — interface +
+    <code>@SystemMessage</code>, a <code>@Configuration</code> class wiring model + tools +
+    memory, and a tools bean — just pointed at a different table and a narrower job.
+  </p>
+
+  <div class="card">
+    <span class="badge badge-tool">@Tool</span> <code>getCellDropSummary(String cellName)</code>
+    <p>"Get drop rate summary for a specific 5G NSA cell by cell name." Sums abnormal-release
+    counters for that cell, computes the drop rate, picks the dominant failure cause, and
+    labels severity (OK / WARNING / CRITICAL).</p>
+  </div>
+
+  <div class="card">
+    <span class="badge badge-tool">@Tool</span> <code>listAllCells()</code>
+    <p>"List all available 5G NSA cells in the database." Returns every distinct cell name —
+    useful as a first step before asking about a specific one.</p>
+  </div>
+
+  <div class="card">
+    <span class="badge badge-tool">@Tool</span> <code>getWorstCells(int topN)</code>
+    <p>"Return the N cells with the highest drop rates." Computes the drop rate for every cell,
+    sorts descending, and returns the top N (capped at 10) with their dominant cause.</p>
+  </div>
+
+  <p>Exposed at: <span class="badge badge-get">GET</span> <code>/agent/drops?message=...</code>
+  — GET, so unlike <code>TelecomAgent</code> this one is directly browser/UI friendly, and it's
+  the default selection on the <a href="chat.html">Chat Console</a> page.</p>
+
+  <h2>4. Calling it from outside</h2>
   <table>
     <tr><th>Endpoint</th><th>Method</th><th>Backed by</th><th>Has tools / memory?</th></tr>
     <tr><td><code>/ai/chat?message=...</code></td><td><span class="badge badge-get">GET</span></td><td><code>ChatService</code></td><td>No</td></tr>
     <tr><td><code>/agent/telecom</code></td><td><span class="badge badge-post">POST</span></td><td><code>TelecomAgent</code></td><td>Yes</td></tr>
+    <tr><td><code>/agent/drops?message=...</code></td><td><span class="badge badge-get">GET</span></td><td><code>DropRateAgent</code></td><td>Yes</td></tr>
   </table>
 
-  <p>The GET endpoint has a click-through UI on the <a href="chat.html">Chat Console</a> page.
+  <p>Both GET endpoints have a click-through UI on the <a href="chat.html">Chat Console</a> page.
   The POST endpoint needs a JSON body, so there's no browser-address-bar way to hit it —
   use curl or Postman:</p>
   <pre><code>curl -X POST http://localhost:8080/agent/telecom \
