@@ -1,0 +1,22 @@
+spring.application.name=ran-parameter-copilot
+
+# -----------------------------
+# DATASOURCE (POSTGRESQL)
+# -----------------------------
+spring.datasource.url=jdbc:postgresql://localhost:5432/your_db
+spring.datasource.username=your_username
+spring.datasource.password=your_password
+spring.datasource.driver-class-name=org.postgresql.Driver
+
+# -----------------------------
+# JPA / HIBERNATE
+# -----------------------------
+spring.jpa.database-platform=org.hibernate.dialect.PostgreSQLDialect
+spring.jpa.hibernate.ddl-auto=update
+spring.jpa.show-sql=true
+spring.jpa.open-in-view=false
+
+# -----------------------------
+# IA - OpenRouter (OpenAI-compatible)
+# -----------------------------
+openai.api-key=your_openrouter_api_key
