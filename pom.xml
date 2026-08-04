@@ -26,7 +26,7 @@
 			<dependency>
 				<groupId>dev.langchain4j</groupId>
 				<artifactId>langchain4j-bom</artifactId>
-				<version>1.0.0-beta1</version>
+				<version>1.18.1</version>
 				<type>pom</type>
 				<scope>import</scope>
 			</dependency>
@@ -47,10 +47,18 @@
 			<artifactId>spring-boot-starter-data-jpa</artifactId>
 		</dependency>
 
-		<!-- PostgreSQL Driver -->
+		<!-- PostgreSQL Driver (home setup) -->
 		<dependency>
 			<groupId>org.postgresql</groupId>
 			<artifactId>postgresql</artifactId>
+			<scope>runtime</scope>
+		</dependency>
+
+		<!-- Oracle JDBC Driver (office setup). Both drivers can sit on the
+		     classpath at once; Spring picks one from spring.datasource.url. -->
+		<dependency>
+			<groupId>com.oracle.database.jdbc</groupId>
+			<artifactId>ojdbc11</artifactId>
 			<scope>runtime</scope>
 		</dependency>
 
@@ -64,6 +72,15 @@
 		<dependency>
 			<groupId>dev.langchain4j</groupId>
 			<artifactId>langchain4j-open-ai</artifactId>
+		</dependency>
+
+		<!-- LangChain4j Google AI Gemini (native protocol).
+		     Required for tool calling with Gemini "thinking" models: the native
+		     API carries thought_signature, which the OpenAI-compatible endpoint
+		     cannot represent. -->
+		<dependency>
+			<groupId>dev.langchain4j</groupId>
+			<artifactId>langchain4j-google-ai-gemini</artifactId>
 		</dependency>
 
 		<!-- LangChain4j Spring Boot starter -->

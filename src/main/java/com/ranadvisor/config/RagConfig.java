@@ -27,6 +27,15 @@ public class RagConfig {
             @Value("${spring.datasource.username}") String dbUser,
             @Value("${spring.datasource.password}") String dbPassword) {
 
+        // pgvector is PostgreSQL-only. On any other database (e.g. Oracle) there is no
+        // embedding store: RAG degrades to "not available" and the rest of the app runs.
+        if (!datasourceUrl.startsWith("jdbc:postgresql://")) {
+            System.out.println("[RagConfig] Datasource is not PostgreSQL — pgvector RAG disabled.");
+            System.out.println("[RagConfig] The app runs normally; getKnowledgeForCause will report "
+                    + "the knowledge base as unavailable.");
+            return null;
+        }
+
         try {
             // Parse jdbc:postgresql://host:port/dbname
             String pgUrl = datasourceUrl.replace("jdbc:postgresql://", "");

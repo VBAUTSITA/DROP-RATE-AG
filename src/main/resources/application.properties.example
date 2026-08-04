@@ -1,5 +1,10 @@
 spring.application.name=ran-parameter-copilot
 
+# =========================================================================
+# HOME SETUP — PostgreSQL + OpenRouter
+# For the office setup (Oracle + Gemini) see application-oracle.properties.example
+# =========================================================================
+
 # -----------------------------
 # DATASOURCE (POSTGRESQL)
 # -----------------------------
@@ -17,6 +22,15 @@ spring.jpa.show-sql=true
 spring.jpa.open-in-view=false
 
 # -----------------------------
-# IA - OpenRouter (OpenAI-compatible)
+# LLM PROVIDER — OpenRouter (OpenAI-compatible)
 # -----------------------------
+# These are the defaults, so they can be omitted entirely; they are spelled out
+# here to mirror the Oracle/Gemini profile.
+llm.provider=openrouter
+llm.model=openai/gpt-4o-mini
+llm.base-url=https://openrouter.ai/api/v1
+llm.max-retries=2
+
+llm.api-key=your_openrouter_api_key
+# Legacy name, still read as a fallback when llm.api-key is absent:
 openai.api-key=your_openrouter_api_key

@@ -19,7 +19,8 @@ public class EvalResult {
     @Column(name = "eval_case_id")
     private Long evalCaseId;         // FK reference to eval_cases.id
 
-    @Column(name = "agent_response", columnDefinition = "TEXT")
+    @Lob
+    @Column(name = "agent_response")
     private String agentResponse;    // full raw response from the agent
 
     @Column(name = "passed")
