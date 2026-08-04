@@ -12,8 +12,8 @@ import org.springframework.context.annotation.Configuration;
 public class AiConfig {
 
     /**
-     * The provider (OpenRouter or Gemini) is chosen in {@link ChatModelConfig};
-     * this class only wires the agent, its tools and its memory.
+     * The Gemini model is built in {@link ChatModelConfig}; this class only wires
+     * the agent, its tools and its memory.
      */
     @Bean
     public TelecomAgent telecomAgent(ChatModel chatModel, TelecomTools tools) {

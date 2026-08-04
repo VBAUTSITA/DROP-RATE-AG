@@ -68,16 +68,16 @@
 			<artifactId>langchain4j</artifactId>
 		</dependency>
 
-		<!-- LangChain4j OpenAI (OpenRouter is OpenAI-compatible) -->
-		<dependency>
-			<groupId>dev.langchain4j</groupId>
-			<artifactId>langchain4j-open-ai</artifactId>
-		</dependency>
-
-		<!-- LangChain4j Google AI Gemini (native protocol).
-		     Required for tool calling with Gemini "thinking" models: the native
-		     API carries thought_signature, which the OpenAI-compatible endpoint
-		     cannot represent. -->
+		<!-- LangChain4j Google AI Gemini (native protocol) — the ONLY LLM
+		     provider on this branch.
+		     langchain4j-open-ai is deliberately absent: this build runs on a
+		     corporate network where outbound calls to public AI endpoints other
+		     than Google's are not permitted. Leaving the OpenAI client off the
+		     classpath makes such a call impossible rather than merely unlikely.
+		     Do not add it back on this branch.
+		     The native API (not Google's OpenAI-compatible endpoint) is required
+		     for tool calling: it carries thought_signature, which the
+		     OpenAI-compatible schema cannot represent. -->
 		<dependency>
 			<groupId>dev.langchain4j</groupId>
 			<artifactId>langchain4j-google-ai-gemini</artifactId>

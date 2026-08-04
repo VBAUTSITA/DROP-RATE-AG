@@ -10,9 +10,8 @@ import org.springframework.context.annotation.Configuration;
 public class DropAgentConfig {
 
     /**
-     * The provider (OpenRouter or Gemini) is chosen in
-     * {@code com.ranadvisor.config.ChatModelConfig}; this class only wires the
-     * agent, its tools and its memory.
+     * The Gemini model is built in {@code com.ranadvisor.config.ChatModelConfig};
+     * this class only wires the agent, its tools and its memory.
      */
     @Bean
     public DropRateAgent dropRateAgent(ChatModel chatModel, DropAnalysisTool tools) {
