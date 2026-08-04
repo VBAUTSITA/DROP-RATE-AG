@@ -3,6 +3,7 @@ package com.ranadvisor.config;
 import dev.langchain4j.http.client.HttpClientBuilder;
 import dev.langchain4j.http.client.jdk.JdkHttpClientBuilder;
 import dev.langchain4j.model.chat.ChatModel;
+import dev.langchain4j.model.googleai.GeminiThinkingConfig;
 import dev.langchain4j.model.googleai.GoogleAiGeminiChatModel;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -67,6 +68,23 @@ public class ChatModelConfig {
     @Value("${gemini.timeout-seconds:60}")
     private Integer timeoutSeconds;
 
+    /**
+     * How to handle Gemini's "thinking" on tool calls: {@code preserve} or {@code off}.
+     *
+     * <p>{@code preserve} keeps the reasoning across the tool loop —
+     * {@code includeThoughts} asks Google to return the thought parts,
+     * {@code returnThinking} stores them on the AiMessage, and {@code sendThinking}
+     * echoes them back on the next turn. Without all three the thought_signature is
+     * dropped between turns and the second request fails with
+     * {@code 400 INVALID_ARGUMENT: Function call is missing a thought_signature}.
+     *
+     * <p>{@code off} sets thinkingBudget=0 so the model never thinks and never emits
+     * a signature. Cheaper and simpler, at the cost of reasoning quality — a fallback
+     * if preserve misbehaves.
+     */
+    @Value("${gemini.thinking:preserve}")
+    private String thinkingMode;
+
     /** Used by both agents. Low temperature = more methodical tool use. */
     @Bean
     @Primary
@@ -75,6 +93,7 @@ public class ChatModelConfig {
         System.out.println("[ChatModelConfig] Proxy=" + (proxyHost.isBlank()
                 ? "JVM default selector (-Dhttps.proxyHost if set)"
                 : proxyHost + ":" + proxyPort));
+        System.out.println("[ChatModelConfig] Thinking=" + thinkingMode);
         return build(0.1);
     }
 
@@ -91,14 +110,30 @@ public class ChatModelConfig {
     }
 
     private ChatModel build(double temperature) {
-        return GoogleAiGeminiChatModel.builder()
+        var builder = GoogleAiGeminiChatModel.builder()
                 .apiKey(apiKey)
                 .modelName(modelName)
                 .temperature(temperature)
                 .maxRetries(maxRetries)
                 .timeout(Duration.ofSeconds(timeoutSeconds))
-                .httpClientBuilder(proxyAwareHttpClientBuilder())
-                .build();
+                .httpClientBuilder(proxyAwareHttpClientBuilder());
+
+        if ("off".equalsIgnoreCase(thinkingMode)) {
+            builder.thinkingConfig(GeminiThinkingConfig.builder()
+                    .thinkingBudget(0)
+                    .build());
+        } else {
+            // All three are needed: ask Google for the thought parts, keep them on
+            // the AiMessage, and send them back on the following turn. Dropping any
+            // one of them loses the thought_signature and breaks the tool loop.
+            builder.thinkingConfig(GeminiThinkingConfig.builder()
+                            .includeThoughts(true)
+                            .build())
+                    .returnThinking(true)
+                    .sendThinking(true);
+        }
+
+        return builder.build();
     }
 
     private HttpClientBuilder proxyAwareHttpClientBuilder() {

@@ -82,3 +82,11 @@ gemini.max-retries=2
 gemini.proxy-host=claro-proxy
 gemini.proxy-port=80
 gemini.timeout-seconds=60
+
+# Gemini "thinking" handling on tool calls: preserve | off
+# preserve (default) keeps the reasoning across the tool loop so the
+# thought_signature survives; without it the second turn fails with
+# "400 INVALID_ARGUMENT: Function call is missing a thought_signature".
+# off sets thinkingBudget=0 so the model never thinks and never emits a
+# signature — a fallback if preserve misbehaves.
+gemini.thinking=preserve
