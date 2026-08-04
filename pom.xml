@@ -83,11 +83,14 @@
 			<artifactId>langchain4j-google-ai-gemini</artifactId>
 		</dependency>
 
-		<!-- LangChain4j Spring Boot starter -->
-		<dependency>
-			<groupId>dev.langchain4j</groupId>
-			<artifactId>langchain4j-spring-boot-starter</artifactId>
-		</dependency>
+<!-- langchain4j-spring-boot-starter is deliberately NOT declared.
+		     Nothing here uses its autoconfiguration (no @AiService, no
+		     langchain4j.* properties) — every bean is built explicitly in
+		     ChatModelConfig / AiConfig / DropAgentConfig / RagConfig.
+		     Its RagAutoConfig eagerly builds a ContentRetriever from the
+		     EmbeddingStore bean, which fails with "embeddingStore cannot be
+		     null" on Oracle, where RagConfig intentionally returns null
+		     because pgvector is PostgreSQL-only. -->
 
 		<!-- LangChain4j pgvector embedding store (RAG) -->
 		<dependency>
