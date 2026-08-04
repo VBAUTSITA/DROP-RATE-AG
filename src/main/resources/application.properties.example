@@ -70,3 +70,15 @@ gemini.max-retries=2
 # text-embedding-004 emits 768 dimensions while the original table was built for
 # OpenAI ada-002 at 1536. Recreate telecom_knowledge, or set the dimension here:
 # rag.embedding-dimension=768
+
+# -----------------------------
+# PROXY FOR THE GEMINI CLIENT
+# -----------------------------
+# The Gemini module talks over java.net.http.HttpClient, which does NOT pick up
+# -Dhttps.proxyHost on its own — behind a corporate proxy every call fails with
+# "TimeoutException: HTTP connect timed out". Set the proxy here and
+# ChatModelConfig hands it to the client explicitly. Leave blank to fall back to
+# the JVM default selector (which does read the -D arguments).
+gemini.proxy-host=claro-proxy
+gemini.proxy-port=80
+gemini.timeout-seconds=60

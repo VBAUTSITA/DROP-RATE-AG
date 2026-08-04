@@ -83,6 +83,14 @@
 			<artifactId>langchain4j-google-ai-gemini</artifactId>
 		</dependency>
 
+		<!-- Pulled in transitively at runtime scope by the Gemini module; declared
+		     explicitly so ChatModelConfig can compile against JdkHttpClientBuilder
+		     and hand the underlying java.net.http.HttpClient a ProxySelector. -->
+		<dependency>
+			<groupId>dev.langchain4j</groupId>
+			<artifactId>langchain4j-http-client-jdk</artifactId>
+		</dependency>
+
 <!-- langchain4j-spring-boot-starter is deliberately NOT declared.
 		     Nothing here uses its autoconfiguration (no @AiService, no
 		     langchain4j.* properties) — every bean is built explicitly in

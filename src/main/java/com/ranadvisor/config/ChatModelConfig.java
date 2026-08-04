@@ -1,11 +1,18 @@
 package com.ranadvisor.config;
 
+import dev.langchain4j.http.client.HttpClientBuilder;
+import dev.langchain4j.http.client.jdk.JdkHttpClientBuilder;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.googleai.GoogleAiGeminiChatModel;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
+
+import java.net.InetSocketAddress;
+import java.net.ProxySelector;
+import java.net.http.HttpClient;
+import java.time.Duration;
 
 /**
  * Google Gemini is the only LLM provider on this branch.
@@ -21,6 +28,15 @@ import org.springframework.context.annotation.Primary;
  * back on the next turn, and the OpenAI-compatible schema has no field to carry
  * it. Through the compatibility endpoint the tool loop fails with
  * {@code 400 INVALID_ARGUMENT: Function call is missing a thought_signature}.
+ *
+ * <p><b>Proxy.</b> The Gemini module talks over {@code java.net.http.HttpClient}
+ * (langchain4j-http-client-jdk), not OkHttp. A client built through
+ * {@code HttpClient.newBuilder()} does not pick up {@code -Dhttps.proxyHost} on
+ * its own, so behind a corporate proxy every call fails with
+ * {@code TimeoutException: HTTP connect timed out}. The selector is therefore set
+ * explicitly here: from {@code gemini.proxy-host} / {@code gemini.proxy-port} when
+ * present, otherwise from {@link ProxySelector#getDefault()}, which does read the
+ * {@code -Dhttps.proxyHost} JVM arguments.
  *
  * <p>Three beans are exposed because callers want different temperatures: the
  * agents are methodical (0.1), the guardrail classifier is deterministic (0.0),
@@ -41,11 +57,24 @@ public class ChatModelConfig {
     @Value("${gemini.max-retries:2}")
     private Integer maxRetries;
 
+    /** Empty means "use the JVM's default proxy selector". */
+    @Value("${gemini.proxy-host:}")
+    private String proxyHost;
+
+    @Value("${gemini.proxy-port:80}")
+    private Integer proxyPort;
+
+    @Value("${gemini.timeout-seconds:60}")
+    private Integer timeoutSeconds;
+
     /** Used by both agents. Low temperature = more methodical tool use. */
     @Bean
     @Primary
     public ChatModel chatModel() {
         System.out.println("[ChatModelConfig] Provider=Google Gemini (native API), model=" + modelName);
+        System.out.println("[ChatModelConfig] Proxy=" + (proxyHost.isBlank()
+                ? "JVM default selector (-Dhttps.proxyHost if set)"
+                : proxyHost + ":" + proxyPort));
         return build(0.1);
     }
 
@@ -67,6 +96,21 @@ public class ChatModelConfig {
                 .modelName(modelName)
                 .temperature(temperature)
                 .maxRetries(maxRetries)
+                .timeout(Duration.ofSeconds(timeoutSeconds))
+                .httpClientBuilder(proxyAwareHttpClientBuilder())
                 .build();
+    }
+
+    private HttpClientBuilder proxyAwareHttpClientBuilder() {
+        ProxySelector selector = proxyHost.isBlank()
+                ? ProxySelector.getDefault()
+                : ProxySelector.of(new InetSocketAddress(proxyHost, proxyPort));
+
+        HttpClient.Builder jdkBuilder = HttpClient.newBuilder().proxy(selector);
+
+        return new JdkHttpClientBuilder()
+                .httpClientBuilder(jdkBuilder)
+                .connectTimeout(Duration.ofSeconds(timeoutSeconds))
+                .readTimeout(Duration.ofSeconds(timeoutSeconds));
     }
 }
