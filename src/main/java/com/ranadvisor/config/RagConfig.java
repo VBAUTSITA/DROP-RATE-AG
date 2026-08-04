@@ -2,7 +2,7 @@ package com.ranadvisor.config;
 
 import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.model.embedding.EmbeddingModel;
-import dev.langchain4j.model.openai.OpenAiEmbeddingModel;
+import dev.langchain4j.model.googleai.GoogleAiEmbeddingModel;
 import dev.langchain4j.store.embedding.EmbeddingStore;
 import dev.langchain4j.store.embedding.pgvector.PgVectorEmbeddingStore;
 import org.springframework.beans.factory.annotation.Value;
@@ -13,11 +13,12 @@ import org.springframework.context.annotation.Configuration;
 public class RagConfig {
 
     @Bean
-    public EmbeddingModel embeddingModel(@Value("${openai.api-key}") String apiKey) {
-        return OpenAiEmbeddingModel.builder()
+    public EmbeddingModel embeddingModel(
+            @Value("${gemini.api-key}") String apiKey,
+            @Value("${gemini.embedding-model:text-embedding-004}") String embeddingModelName) {
+        return GoogleAiEmbeddingModel.builder()
                 .apiKey(apiKey)
-                .baseUrl("https://openrouter.ai/api/v1")
-                .modelName("openai/text-embedding-ada-002")
+                .modelName(embeddingModelName)
                 .build();
     }
 
@@ -25,7 +26,17 @@ public class RagConfig {
     public EmbeddingStore<TextSegment> embeddingStore(
             @Value("${spring.datasource.url}") String datasourceUrl,
             @Value("${spring.datasource.username}") String dbUser,
-            @Value("${spring.datasource.password}") String dbPassword) {
+            @Value("${spring.datasource.password}") String dbPassword,
+            @Value("${rag.embedding-dimension:768}") int dimension) {
+
+        // pgvector is PostgreSQL-only. On any other database (e.g. Oracle) there is no
+        // embedding store: RAG degrades to "not available" and the rest of the app runs.
+        if (!datasourceUrl.startsWith("jdbc:postgresql://")) {
+            System.out.println("[RagConfig] Datasource is not PostgreSQL — pgvector RAG disabled.");
+            System.out.println("[RagConfig] The app runs normally; getKnowledgeForCause will report "
+                    + "the knowledge base as unavailable.");
+            return null;
+        }
 
         try {
             // Parse jdbc:postgresql://host:port/dbname
@@ -41,7 +52,10 @@ public class RagConfig {
                     .user(dbUser)
                     .password(dbPassword)
                     .table("telecom_knowledge")
-                    .dimension(1536)
+                    // Google text-embedding-004 emits 768 dimensions, not the 1536 of
+                    // OpenAI ada-002. A telecom_knowledge table created for the old model
+                    // must be recreated, or set rag.embedding-dimension to match it.
+                    .dimension(dimension)
                     .createTable(false) // table created manually via SQL; do not let LangChain4j alter it
                     .build();
 

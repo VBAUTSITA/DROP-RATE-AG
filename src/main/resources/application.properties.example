@@ -1,22 +1,92 @@
 spring.application.name=ran-parameter-copilot
 
+# =========================================================================
+# OFFICE BRANCH — Oracle + Google Gemini ONLY
+# =========================================================================
+# This branch has no OpenRouter/OpenAI support: langchain4j-open-ai is not on
+# the classpath, so the application cannot call a public AI endpoint other
+# than Google's. Use the master branch for the PostgreSQL + OpenRouter setup.
+# =========================================================================
+
 # -----------------------------
-# DATASOURCE (POSTGRESQL)
+# DATASOURCE (ORACLE)
 # -----------------------------
-spring.datasource.url=jdbc:postgresql://localhost:5432/your_db
-spring.datasource.username=your_username
+# Service-name form (most common):
+spring.datasource.url=jdbc:oracle:thin:@//host:1521/SERVICE_NAME
+# SID form, if your DBA gave you a SID instead of a service name:
+# spring.datasource.url=jdbc:oracle:thin:@host:1521:SID
+spring.datasource.username=your_dev_schema
 spring.datasource.password=your_password
-spring.datasource.driver-class-name=org.postgresql.Driver
+spring.datasource.driver-class-name=oracle.jdbc.OracleDriver
 
 # -----------------------------
 # JPA / HIBERNATE
 # -----------------------------
-spring.jpa.database-platform=org.hibernate.dialect.PostgreSQLDialect
+# Do NOT set spring.jpa.database-platform here. Hibernate 6 auto-detects the
+# Oracle dialect from JDBC metadata; leaving PostgreSQLDialect in place makes
+# Hibernate emit Postgres SQL against Oracle (ORA-00902 on create table).
+#
+# ddl-auto=update creates the tables in your dev schema on first start; it needs
+# CREATE TABLE privilege plus tablespace quota. If the schema is locked down,
+# have your DBA create the tables and switch this to "validate".
 spring.jpa.hibernate.ddl-auto=update
 spring.jpa.show-sql=true
 spring.jpa.open-in-view=false
 
 # -----------------------------
-# IA - OpenRouter (OpenAI-compatible)
+# LLM — GOOGLE GEMINI (native API)
 # -----------------------------
-openai.api-key=your_openrouter_api_key
+# Both are REQUIRED: startup fails if either is missing. That is intentional —
+# the application must never guess an outbound AI destination.
+gemini.api-key=your_google_ai_studio_key
+gemini.model=gemini-3.6-flash
+
+# Keep retries low on the free tier: every failed call is retried and the
+# per-minute quota is small (429 RESOURCE_EXHAUSTED).
+gemini.max-retries=2
+
+# -----------------------------
+# CORPORATE PROXY
+# -----------------------------
+# Java ignores the Windows proxy settings that browsers and Python use, so
+# outbound calls fail with "Connection timed out" until the JVM is told about
+# the proxy. This is a JVM argument, not a property — add it to the launch
+# configuration (VS Code .vscode/launch.json):
+#
+#   "vmArgs": "-Dhttps.proxyHost=your-proxy -Dhttps.proxyPort=80 -Dhttp.proxyHost=your-proxy -Dhttp.proxyPort=80 -Dhttp.nonProxyHosts=localhost|127.0.0.1"
+#
+# Find the proxy with:  python -c "import urllib.request;print(urllib.request.getproxies())"
+# JDBC uses plain sockets and ignores these properties, so Oracle is unaffected.
+
+# -----------------------------
+# RAG / pgvector
+# -----------------------------
+# Not available on Oracle: PgVectorEmbeddingStore is PostgreSQL-only. RagConfig
+# detects the non-PostgreSQL URL and disables the embedding store, logging
+# "[RagConfig] Datasource is not PostgreSQL". The app starts normally and only
+# getKnowledgeForCause reports the knowledge base as unavailable.
+#
+# If RAG is ever enabled on PostgreSQL from this branch, note that Google
+# text-embedding-004 emits 768 dimensions while the original table was built for
+# OpenAI ada-002 at 1536. Recreate telecom_knowledge, or set the dimension here:
+# rag.embedding-dimension=768
+
+# -----------------------------
+# PROXY FOR THE GEMINI CLIENT
+# -----------------------------
+# The Gemini module talks over java.net.http.HttpClient, which does NOT pick up
+# -Dhttps.proxyHost on its own — behind a corporate proxy every call fails with
+# "TimeoutException: HTTP connect timed out". Set the proxy here and
+# ChatModelConfig hands it to the client explicitly. Leave blank to fall back to
+# the JVM default selector (which does read the -D arguments).
+gemini.proxy-host=claro-proxy
+gemini.proxy-port=80
+gemini.timeout-seconds=60
+
+# Gemini "thinking" handling on tool calls: preserve | off
+# preserve (default) keeps the reasoning across the tool loop so the
+# thought_signature survives; without it the second turn fails with
+# "400 INVALID_ARGUMENT: Function call is missing a thought_signature".
+# off sets thinkingBudget=0 so the model never thinks and never emits a
+# signature — a fallback if preserve misbehaves.
+gemini.thinking=preserve
