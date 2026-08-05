@@ -14,6 +14,7 @@ import com.ranadvisor.drops.entity.NrCellDrops;
 import com.ranadvisor.drops.repository.NrCellDropsRepository;
 import com.ranadvisor.logging.AgentLog;
 import com.ranadvisor.logging.AgentLogRepository;
+import com.ranadvisor.pci.PciTrackWorkflow;
 
 import java.util.Comparator;
 import java.util.List;
@@ -33,6 +34,9 @@ public class DropAnalysisTool {
 
     @Autowired(required = false)
     private EmbeddingStore<TextSegment> embeddingStore;
+
+    @Autowired
+    private PciTrackWorkflow pciTrack;
 
     // ─── existing tools (unchanged logic, timing + log wrapper added) ─────────
 
@@ -82,6 +86,22 @@ public class DropAnalysisTool {
         }
         String result = sb.toString();
         log("getWorstCells", "topN=" + topN, result, start);
+        return result;
+    }
+
+    // ─── cross-domain tool: PCI ────────────────────────────────────────────────
+
+    @Tool("Pursue the PCI (Physical Cell Identity) track for a cell: audit its PCI plan for "
+        + "collision / confusion / mod-3 conflicts and, only when a conflict is found, compute a "
+        + "conflict-free PCI proposal with the planner's reasoning. Call this when getCellDropSummary "
+        + "reports an access/RACH-dominated cause such as 'RA Problem', or whenever the user asks "
+        + "whether PCI is behind the drops or asks for a new PCI. A PCI collision or confusion makes "
+        + "the UE unable to resolve which cell it is talking to, which shows up precisely as RACH and "
+        + "handover failures. This only reads and simulates — it never changes the network.")
+    public String suggestPciFixForCell(String cellName) {
+        long start = System.currentTimeMillis();
+        String result = pciTrack.run(cellName);
+        log("suggestPciFixForCell", cellName, result, start);
         return result;
     }
 

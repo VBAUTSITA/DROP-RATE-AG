@@ -19,16 +19,19 @@ public class EvalCase {
     @Column(name = "agent", nullable = false, length = 20)
     private String agent;            // 'drops' or 'telecom'
 
-    @Column(name = "question", nullable = false, columnDefinition = "TEXT")
+    @Lob
+    @Column(name = "question", nullable = false)
     private String question;
 
-    @Column(name = "expected", nullable = false, columnDefinition = "TEXT")
+    @Lob
+    @Column(name = "expected", nullable = false)
     private String expected;         // ground-truth answer fragment
 
     @Column(name = "score_type", nullable = false, length = 20)
     private String scoreType;        // 'exact', 'contains', or 'llm_judge'
 
-    @Column(name = "notes", columnDefinition = "TEXT")
+    @Lob
+    @Column(name = "notes")
     private String notes;
 
     @Column(name = "created_at")

@@ -65,3 +65,26 @@ CREATE INDEX IF NOT EXISTS telecom_knowledge_embedding_idx
 - If OpenRouter does not proxy `text-embedding-ada-002`, try `text-embedding-3-small` in `RagConfig.embeddingModel()`, or point directly at `https://api.openai.com/v1`.
 - If `PgVectorEmbeddingStore` bean creation fails at startup, the app still starts — RAG tools return "not available" messages. Fix: run the SQL setup above, then restart.
 - `/agent/telecom` (POST) has no UI; test via curl/Postman.
+
+## Multi-module orchestration (NEW — branch `claude/ran-multi-module-orchestration`)
+
+Adds a second diagnostic module (**PCI planning**) and an orchestration layer that connects
+it with the drop-rate module. Full design + rationale: `src/main/resources/static/orchestration-design.md`.
+
+- **Shared SPI** (`com.ranadvisor.core`): `DiagnosticModule.analyze(cell) → ModuleFinding` (typed
+  `tags`, not prose) + `RootCauseHypothesis`. Modules never reference each other.
+- **PCI module** (`com.ranadvisor.pci`): `PciCell`/`PciNeighbor` entities, `PciAnalysisTool`
+  (deterministic collision/confusion/mod-3 detection + `suggestPci`), `PciPlanningAgent`,
+  `PciDataLoader` (28-cell plan with 3 deliberate conflicts), `PciModule` SPI adapter, `/agent/pci`.
+- **Drop SPI adapter** (`com.ranadvisor.drops.DropRateModule`): exposes existing drop data as typed
+  findings — no existing file changed.
+- **Orchestrator** (`com.ranadvisor.orchestrator`): `RanSupervisorAgent` (LLM front door, routes),
+  `OrchestratorTools` (agent-as-tool routing + `diagnoseCell` fan-out over `List<DiagnosticModule>`),
+  `CrossModuleCorrelator` (deterministic rule engine → root-cause hypothesis).
+- **Endpoints**: `GET /agent/ran?message=` (LLM-orchestrated) and `GET /agent/ran/diagnose?cell=`
+  (deterministic, no LLM).
+- **Worked, unit-tested result**: worst cell `ARR40312C1_Moran_Uribe` (30.13 % drops, RA Problem) is
+  correlated with a seeded PCI collision (PCI 168) → HIGH-confidence verdict "PCI collision is the
+  likely root cause of the RACH-driven drops."
+- **Tests**: `OrchestrationLogicTest` (7/7, no DB). `InputGuardrail` keywords extended with
+  PCI/orchestration terms (additive).

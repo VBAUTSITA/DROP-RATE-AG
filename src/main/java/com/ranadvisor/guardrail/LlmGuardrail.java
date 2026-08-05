@@ -4,8 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.UserMessage;
-import dev.langchain4j.model.openai.OpenAiChatModel;
-import org.springframework.beans.factory.annotation.Value;
+import dev.langchain4j.model.chat.ChatModel;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -47,31 +47,26 @@ public class LlmGuardrail {
         {"safe": true, "on_topic": true, "reason": "brief reason in English, max 12 words"}
         """;
 
-    private final OpenAiChatModel model;
+    private final ChatModel model;
     private final ObjectMapper mapper = new ObjectMapper();
 
-    public LlmGuardrail(@Value("${openai.api-key}") String apiKey) {
-        this.model = OpenAiChatModel.builder()
-                .apiKey(apiKey)
-                .baseUrl("https://openrouter.ai/api/v1")
-                .modelName("openai/gpt-4o-mini")
-                .temperature(0.0)   // deterministic output for consistent classification
-                .build();
+    /** guardrailChatModel is built at temperature 0.0 for deterministic classification. */
+    public LlmGuardrail(@Qualifier("guardrailChatModel") ChatModel model) {
+        this.model = model;
     }
 
     public GuardrailResult check(String userMessage) {
         try {
             // Use separate system + user messages — cleaner than concatenating into one prompt
             // and prevents the user text from bleeding into the classifier's instructions.
-            @SuppressWarnings("deprecation")
-            var response = model.generate(
+            var response = model.chat(
                 List.of(
                     SystemMessage.from(SYSTEM_PROMPT),
                     UserMessage.from(userMessage)
                 )
             );
 
-            String text = response.content().text();
+            String text = response.aiMessage().text();
             String json = extractJsonBlock(text);
             JsonNode node = mapper.readTree(json);
 
