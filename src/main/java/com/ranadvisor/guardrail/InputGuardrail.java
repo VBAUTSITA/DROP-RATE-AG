@@ -34,7 +34,14 @@ public class InputGuardrail {
         "causa", "rendimiento", "kpi", "lista",
         // English
         "cell", "cells", "network", "coverage", "worst",
-        "analyze", "retainability", "cause", "performance", "list"
+        "analyze", "retainability", "cause", "performance", "list",
+        // PCI planning + multi-module orchestration
+        "pci", "conflicto", "conflict", "colision", "collision",
+        "confusion", "mod3", "mod-3", "handover", "traspaso",
+        "vecino", "vecinos", "neighbor", "neighbour", "planificacion",
+        "planning", "interferencia", "interference", "diagnostico",
+        "diagnose", "raiz", "root", "orquesta", "supervisor",
+        "modulo", "module"
     );
 
     // Matches cell-name-like tokens: 2+ uppercase letters followed by 3+ digits (e.g. ARR40312C1)

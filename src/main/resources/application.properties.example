@@ -90,3 +90,25 @@ gemini.timeout-seconds=60
 # off sets thinkingBudget=0 so the model never thinks and never emits a
 # signature — a fallback if preserve misbehaves.
 gemini.thinking=preserve
+
+# -----------------------------
+# PCI PLANNING BACKEND
+# -----------------------------
+# Which implementation of PciPlannerPort answers the PCI tools.
+#
+#   local  (default) — the seeded PCI mirror in this database. Detects collision /
+#                      confusion / mod-3 and proposes a conflict-free PCI. It does NOT
+#                      model RSI and does NOT weigh RF geometry; every answer says so.
+#   rest             — the real multi-technology PCI/RSI planner over HTTP. It runs on
+#                      JDK 8 (its engine needs Nashorn), so it cannot be called in-process.
+#
+# Switching backends changes no tool signature and no correlation rule.
+pci.planner.backend=local
+
+# Only read when pci.planner.backend=rest — see integration/tracker/README.md
+#pci.planner.base-url=http://tracker.internal:8080
+#pci.planner.api-key=
+# The re-plan call runs the assignment engine over the surrounding network, so its read
+# timeout is deliberately much longer than the connect timeout.
+#pci.planner.connect-timeout-ms=3000
+#pci.planner.read-timeout-ms=30000
