@@ -13,7 +13,7 @@ public class PciAgentConfig {
     @Bean
     public PciPlanningAgent pciPlanningAgent(
             @Value("${openai.api-key}") String apiKey,
-            PciAnalysisTool tools) {
+            PciPlannerTools tools) {
 
         OpenAiChatModel model = OpenAiChatModel.builder()
                 .apiKey(apiKey)

@@ -7,6 +7,9 @@ import com.ranadvisor.pci.PciConflict;
 import com.ranadvisor.pci.PciModule;
 import com.ranadvisor.pci.entity.PciCell;
 import com.ranadvisor.pci.entity.PciNeighbor;
+import com.ranadvisor.pci.planner.LocalPciPlannerAdapter;
+import com.ranadvisor.pci.planner.PciAudit;
+import com.ranadvisor.pci.planner.PciProposal;
 import com.ranadvisor.pci.repository.PciCellRepository;
 import com.ranadvisor.pci.repository.PciNeighborRepository;
 import org.junit.jupiter.api.Test;
@@ -106,15 +109,95 @@ class OrchestrationLogicTest {
                 "suggested PCI must not collide with any neighbour");
     }
 
+    /** The local backend, wired over the same seeded topology the other tests use. */
+    private LocalPciPlannerAdapter localBackend() {
+        LocalPciPlannerAdapter adapter = new LocalPciPlannerAdapter();
+        ReflectionTestUtils.setField(adapter, "detection", tool());
+        return adapter;
+    }
+
     @Test
     void pciModule_reportsCriticalCollisionForWorstCell() {
-        PciAnalysisTool t = tool();
         PciModule module = new PciModule();
-        ReflectionTestUtils.setField(module, "pci", t);
-        ReflectionTestUtils.setField(module, "cellRepo", ReflectionTestUtils.getField(t, "cellRepo"));
+        ReflectionTestUtils.setField(module, "planner", localBackend());
         ModuleFinding f = module.analyze(WORST);
         assertEquals(ModuleFinding.CRITICAL, f.severity());
         assertTrue(f.hasTag("PCI_COLLISION"));
+    }
+
+    // ─── the planner port: identify, then re-plan ───────────────────────────────
+
+    @Test
+    void audit_identifiesTheCollisionAndMarksItFatal() {
+        PciAudit audit = localBackend().audit(WORST);
+        assertFalse(audit.isClean(), "the worst cell has a seeded PCI collision");
+        assertTrue(audit.hasFatal(), "a collision must be reported as fatal, not as a mod-3 nuisance");
+        assertEquals("collision", audit.worstKind());
+        assertEquals(1, audit.count(PciConflict.COLLISION));
+    }
+
+    @Test
+    void proposal_movesOffTheCollidingPci_andCarriesItsReasoning() {
+        PciProposal p = localBackend().propose(WORST);
+
+        assertTrue(p.available(), "a conflict-free PCI must exist in this topology");
+        assertEquals(168, p.currentPci().intValue());
+        assertNotEquals(168, p.proposedPci().intValue(), "must move off the colliding PCI");
+
+        // The audit trail is the point of the proposal: a bare number is not actionable.
+        assertFalse(p.auditTrail().isEmpty(), "a proposal must explain how it got there");
+        assertTrue(p.auditTrail().stream().anyMatch(s -> s.contains("excluded")),
+                "the trail must name the constraints that excluded candidate PCIs");
+
+        // The local backend does not model RSI; it must say so instead of inventing one.
+        assertNull(p.proposedRsi());
+        assertTrue(p.warnings().stream().anyMatch(w -> w.contains("RSI")),
+                "the missing RSI has to be surfaced as a caveat");
+    }
+
+    @Test
+    void proposal_isNeverAnAppliedChange() {
+        // The write path must not be reachable from any tool: a proposal is a simulation.
+        assertFalse(localBackend().propose(WORST).applied());
+    }
+
+    @Test
+    void cleanCell_auditsCleanAndYieldsNoProposalPressure() {
+        // ARR18912C1 sits on PCI 20 with no seeded conflict.
+        PciAudit audit = localBackend().audit("ARR18912C1_Jm_Cuadros");
+        assertTrue(audit.isClean(), "this cell has no seeded conflict");
+        assertFalse(audit.hasFatal());
+        assertEquals("", audit.worstKind());
+    }
+
+    @Test
+    void unknownCell_yieldsNoFindingRatherThanAnError() {
+        PciModule module = new PciModule();
+        ReflectionTestUtils.setField(module, "planner", localBackend());
+        ModuleFinding f = module.analyze("DOES_NOT_EXIST");
+        // UNKNOWN, not OK: the cell was never checked, so nothing about its PCI is established.
+        assertEquals(ModuleFinding.UNKNOWN, f.severity());
+        assertFalse(f.isActionable());
+        assertTrue(f.tags().isEmpty());
+    }
+
+    @Test
+    void correlator_treatsAnUnreachablePciBackendAsUnknown_notAsCleanPci() {
+        // Guards the rule that matters most here: "PCI clean" and "PCI not checked" must not
+        // produce the same verdict. A backend outage must never let the correlator conclude
+        // that identity has been ruled out.
+        ModuleFinding drop = new ModuleFinding("drop-rate", WORST, ModuleFinding.CRITICAL,
+                "Drop rate 30.13% (CRITICAL); dominant cause RA Problem.",
+                Set.of("HIGH_DROP", "RACH_FAILURE"), "");
+        ModuleFinding pciDown = new ModuleFinding("pci-planning", WORST, ModuleFinding.UNKNOWN,
+                "PCI backend unavailable — identity conflicts could not be checked.", Set.of(), "");
+
+        RootCauseHypothesis h = new CrossModuleCorrelator().correlate(WORST, List.of(drop, pciDown));
+
+        assertFalse(h.rationale().toLowerCase().contains("plan is clean"),
+                "an unreachable backend must not be described as a clean PCI plan");
+        assertNotEquals(RootCauseHypothesis.HIGH, h.confidence(),
+                "no high-confidence verdict may rest on a PCI check that never ran");
     }
 
     @Test

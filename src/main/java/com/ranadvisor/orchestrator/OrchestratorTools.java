@@ -7,6 +7,11 @@ import com.ranadvisor.drops.DropRateAgent;
 import com.ranadvisor.logging.AgentLog;
 import com.ranadvisor.logging.AgentLogRepository;
 import com.ranadvisor.pci.PciPlanningAgent;
+import com.ranadvisor.pci.PciPlannerTools;
+import com.ranadvisor.pci.planner.PciAudit;
+import com.ranadvisor.pci.planner.PciPlannerPort;
+import com.ranadvisor.pci.planner.PciPlannerUnavailableException;
+import com.ranadvisor.pci.planner.PciProposal;
 import dev.langchain4j.agent.tool.Tool;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -34,6 +39,8 @@ public class OrchestratorTools {
     @Autowired private CrossModuleCorrelator correlator;
     @Autowired private DropRateAgent dropRateAgent;
     @Autowired private PciPlanningAgent pciPlanningAgent;
+    @Autowired private PciPlannerPort pciPlanner;
+    @Autowired private PciPlannerTools pciTools;
     @Autowired private AgentLogRepository logRepo;
 
     @Tool("List the diagnostic modules available to the platform (id and domain). Use to see what problems can be diagnosed.")
@@ -82,6 +89,65 @@ public class OrchestratorTools {
         String result = sb.toString();
         log("diagnoseCell", cellName, result, start);
         return result;
+    }
+
+    @Tool("Pursue the PCI track for a cell: audit its PCI plan for conflicts and, only if a conflict is found, compute a re-plan proposal with the engine's reasoning. Use this after a diagnosis has listed the possible causes and the user decides to go after the PCI/identity one. This only reads and simulates — it never changes the network.")
+    public String tacklePciIssue(String cellName) {
+        long start = System.currentTimeMillis();
+        String result = pciWorkflow(cellName);
+        log("tacklePciIssue", cellName, result, start);
+        return result;
+    }
+
+    /**
+     * The identify → re-plan sequence, kept deterministic on purpose.
+     *
+     * <p>The order matters and is not left to the model to chain: a proposal is only
+     * computed when the audit actually found something. Re-planning a cell whose identity
+     * is already clean would move a PCI for no reason and hand the user a change to apply
+     * that fixes nothing — and, because the audit is cheap and the proposal is not, it
+     * would also pay for the assignment engine to answer a question nobody asked.
+     */
+    private String pciWorkflow(String cellName) {
+        PciAudit audit;
+        try {
+            audit = pciPlanner.audit(cellName);
+        } catch (PciPlannerUnavailableException e) {
+            return "Could not audit the PCI of " + cellName + ": " + e.getMessage()
+                 + "\nNo conclusion should be drawn about this cell's PCI.";
+        }
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("PCI track for ").append(cellName).append("\n\n");
+        sb.append("Step 1 — identify\n");
+
+        if (audit.isClean()) {
+            sb.append("  No PCI conflict found for this cell (checked by ")
+              .append(audit.source()).append(").\n\n");
+            sb.append("Step 2 — re-plan: not applicable.\n");
+            sb.append("  There is nothing to correct here, so no PCI change is proposed. Moving a PCI on a "
+                    + "cell with a clean identity plan would be a change with no fault to fix.\n");
+            sb.append("  This also narrows the diagnosis: identity is ruled out, so the cause of the drops "
+                    + "lies in another domain (coverage, transport, or a parameter). Follow the dominant "
+                    + "cause reported by the drop module.");
+            return sb.toString();
+        }
+
+        sb.append("  ").append(pciTools.renderAudit(audit, cellName).replace("\n", "\n  ")).append("\n\n");
+        sb.append("Step 2 — re-plan\n");
+
+        PciProposal proposal;
+        try {
+            proposal = pciPlanner.propose(cellName);
+        } catch (PciPlannerUnavailableException e) {
+            sb.append("  The conflict above is confirmed, but the planning engine could not be reached to "
+                    + "compute a new PCI: ").append(e.getMessage()).append('\n');
+            sb.append("  The identification still stands — the re-plan has to be done in the planning tool.");
+            return sb.toString();
+        }
+
+        sb.append("  ").append(pciTools.renderProposal(proposal).replace("\n", "\n  "));
+        return sb.toString();
     }
 
     @Tool("Ask the call-drop / retainability specialist a natural-language question (drop rates, worst cells, dominant drop causes). Use for questions specifically about drops.")

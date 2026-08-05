@@ -1,30 +1,27 @@
 package com.ranadvisor.pci;
 
-import com.ranadvisor.logging.AgentLog;
-import com.ranadvisor.logging.AgentLogRepository;
 import com.ranadvisor.pci.entity.PciCell;
 import com.ranadvisor.pci.entity.PciNeighbor;
 import com.ranadvisor.pci.repository.PciCellRepository;
 import com.ranadvisor.pci.repository.PciNeighborRepository;
-import dev.langchain4j.agent.tool.Tool;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 /**
- * PCI (Physical Cell Identity) planning + conflict diagnostics.
+ * PCI (Physical Cell Identity) conflict detection over the local PCI mirror.
  *
- * <p>Detection is fully deterministic (no LLM). The {@code @Tool} methods expose it
- * to the PCI agent as formatted strings; {@link #detectForCell(String)} exposes the
- * same logic as typed {@link PciConflict}s for the orchestrator (via {@code PciModule}).
+ * <p>This class is the <b>local detection engine</b>, not a tool surface: it is
+ * deterministic (no LLM) and knows nothing about agents. The {@code @Tool} methods that
+ * used to live here moved to {@link com.ranadvisor.pci.PciPlannerTools}, which talks to a
+ * {@link com.ranadvisor.pci.planner.PciPlannerPort} so the same tools work against either
+ * this mirror or the real multi-technology planner.
  *
  * <p>Neighbour set of a cell = explicit ANR relations (either direction) ∪ co-sited
  * cells (same gNodeB). mod-3 (PSS) conflicts are only meaningful within the same NR-ARFCN.
@@ -34,7 +31,6 @@ public class PciAnalysisTool {
 
     @Autowired private PciCellRepository cellRepo;
     @Autowired private PciNeighborRepository neighborRepo;
-    @Autowired private AgentLogRepository logRepo;
 
     public static final int MAX_PCI = 503;
 
@@ -118,39 +114,92 @@ public class PciAnalysisTool {
     }
 
     /**
-     * Suggest a conflict-free PCI for a cell: avoids any neighbour's PCI (collision),
-     * any same-carrier neighbour's PSS group (mod-3), and any PCI already used by a
+     * The constraint set the PCI search runs against, kept as a value so a caller can
+     * explain <i>why</i> a value was chosen instead of only reporting the number.
+     *
+     * @param bannedExact     PCIs excluded outright — a neighbour's PCI (collision) or a
+     *                        second-tier cell's PCI (would create confusion)
+     * @param bannedMod3      PSS groups excluded because a same-carrier neighbour occupies them
+     * @param neighbourCount  size of the neighbour set considered
+     * @param sameCarrierCount how many of those share the cell's NR-ARFCN (mod-3 only applies there)
+     */
+    public record PciSearchSpace(
+            Set<Integer> bannedExact,
+            Set<Integer> bannedMod3,
+            int neighbourCount,
+            int sameCarrierCount) {}
+
+    /**
+     * Build the constraint set for a cell: any neighbour's PCI (collision), any
+     * same-carrier neighbour's PSS group (mod-3), and any PCI already used by a
      * second-tier cell that shares a neighbour with the target (would create confusion).
      */
-    public Integer suggestPci(String cellName) {
+    public PciSearchSpace searchSpace(String cellName) {
         PciCell self = cellRepo.findByCellName(cellName);
         if (self == null) return null;
         List<PciCell> neighbors = neighborsOf(cellName);
 
         Set<Integer> bannedExact = new LinkedHashSet<>();   // collision + confusion sources
         Set<Integer> bannedMod3  = new LinkedHashSet<>();   // same-carrier PSS groups
+        int sameCarrier = 0;
         for (PciCell n : neighbors) {
             if (n.getPci() == null) continue;
             bannedExact.add(n.getPci());
-            if (sameArfcn(self, n)) bannedMod3.add(n.getPci() % 3);
+            if (sameArfcn(self, n)) {
+                bannedMod3.add(n.getPci() % 3);
+                sameCarrier++;
+            }
             // second tier: cells sharing a neighbour with us must not equal our new PCI
             for (PciCell m : neighborsOf(n.getCellName())) {
                 if (m.getPci() != null && !m.getCellName().equals(cellName)) bannedExact.add(m.getPci());
             }
         }
-        // Pass 1 (ideal): avoid collision + confusion AND mod-3.
+        return new PciSearchSpace(bannedExact, bannedMod3, neighbors.size(), sameCarrier);
+    }
+
+    /**
+     * Suggest a conflict-free PCI for a cell: avoids any neighbour's PCI (collision),
+     * any same-carrier neighbour's PSS group (mod-3), and any PCI already used by a
+     * second-tier cell that shares a neighbour with the target (would create confusion).
+     */
+    public Integer suggestPci(String cellName) {
+        PciSearchSpace space = searchSpace(cellName);
+        return space == null ? null : firstFreePci(space);
+    }
+
+    /**
+     * First acceptable PCI for a constraint set, or {@code null} if none exists.
+     *
+     * <p>Pass 1 (ideal) avoids collision, confusion AND mod-3. Pass 2 is the fallback for
+     * when the same-carrier neighbourhood already occupies all three PSS groups: it
+     * returns a collision/confusion-free PCI anyway, because resolving the fatal conflicts
+     * matters more than a residual mod-3.
+     */
+    public Integer firstFreePci(PciSearchSpace space) {
         for (int pci = 0; pci <= MAX_PCI; pci++) {
-            if (bannedExact.contains(pci)) continue;
-            if (bannedMod3.contains(pci % 3)) continue;
+            if (space.bannedExact().contains(pci)) continue;
+            if (space.bannedMod3().contains(pci % 3)) continue;
             return pci;
         }
-        // Pass 2 (fallback): the same-carrier neighbourhood occupies all 3 PSS groups,
-        // so mod-3 cannot be fully avoided. Return a collision/confusion-free PCI anyway —
-        // resolving the fatal conflicts matters more than a residual mod-3.
         for (int pci = 0; pci <= MAX_PCI; pci++) {
-            if (!bannedExact.contains(pci)) return pci;
+            if (!space.bannedExact().contains(pci)) return pci;
         }
         return null;
+    }
+
+    /** True when {@link #firstFreePci} had to fall back to pass 2 (mod-3 unavoidable). */
+    public boolean mod3Unavoidable(PciSearchSpace space) {
+        return space.bannedMod3().size() >= 3;
+    }
+
+    /** Read-through to the mirror, so adapters do not need their own repository handle. */
+    public PciCell findCell(String cellName) {
+        return cellRepo.findByCellName(cellName);
+    }
+
+    /** Every cell in the mirror — used by the network-wide audit. */
+    public List<PciCell> allCells() {
+        return cellRepo.findAll();
     }
 
     /** True if {@link #suggestPci} can also avoid mod-3 (pass 1), false if only collision/confusion. */
@@ -163,114 +212,5 @@ public class PciAnalysisTool {
             if (n.getPci() != null && sameArfcn(self, n) && n.getPci() % 3 == s % 3) return false;
         }
         return true;
-    }
-
-    // ─── @Tool surface for the PCI agent ────────────────────────────────────────
-
-    @Tool("Get the PCI plan for a specific cell: its PCI, carrier (NR-ARFCN), azimuth, gNodeB and neighbour count. Use when the user asks about the PCI/identity/plan of a cell.")
-    public String getCellPci(String cellName) {
-        long start = System.currentTimeMillis();
-        PciCell c = cellRepo.findByCellName(cellName);
-        String result;
-        if (c == null) {
-            result = "Cell not found in PCI plan: " + cellName;
-        } else {
-            List<PciCell> ns = neighborsOf(cellName);
-            String neighborList = ns.stream()
-                    .map(n -> n.getCellName() + "(PCI " + n.getPci() + ")")
-                    .collect(Collectors.joining(", "));
-            result = String.format(
-                    "Cell: %s%ngNodeB: %s%nPCI: %d (PSS group %d)%nNR-ARFCN: %s%nAzimuth: %s°%nNeighbours (%d): %s",
-                    c.getCellName(), c.getGnodebName(), c.getPci(), c.pssGroup(),
-                    String.valueOf(c.getNrArfcn()), String.valueOf(c.getAzimuthDeg()),
-                    ns.size(), neighborList.isEmpty() ? "(none)" : neighborList);
-        }
-        log("getCellPci", cellName, result, start);
-        return result;
-    }
-
-    @Tool("Check PCI conflicts (collision, confusion, mod-3/PSS) for one specific cell and its neighbours. Use when the user asks whether a cell has a PCI problem, or as a root-cause check for a cell with high drops or handover/RACH failures.")
-    public String checkCellPciConflicts(String cellName) {
-        long start = System.currentTimeMillis();
-        PciCell c = cellRepo.findByCellName(cellName);
-        String result;
-        if (c == null) {
-            result = "Cell not found in PCI plan: " + cellName;
-        } else {
-            List<PciConflict> conflicts = detectForCell(cellName);
-            if (conflicts.isEmpty()) {
-                result = "No PCI conflicts found for " + cellName + " (PCI " + c.getPci() + ").";
-            } else {
-                StringBuilder sb = new StringBuilder();
-                sb.append("PCI conflicts for ").append(cellName)
-                  .append(" (PCI ").append(c.getPci()).append("):\n");
-                for (PciConflict cf : conflicts) sb.append(" - ").append(cf).append('\n');
-                Integer suggestion = suggestPci(cellName);
-                if (suggestion != null) {
-                    sb.append("Suggested conflict-free PCI: ").append(suggestion)
-                      .append(" (PSS group ").append(suggestion % 3).append(").");
-                }
-                result = sb.toString();
-            }
-        }
-        log("checkCellPciConflicts", cellName, result, start);
-        return result;
-    }
-
-    @Tool("List all PCI conflicts across the whole network (collision, confusion, mod-3). Use when the user asks for a network-wide PCI audit or which cells have PCI problems.")
-    public String listPciConflicts() {
-        long start = System.currentTimeMillis();
-        List<PciConflict> conflicts = detectNetworkWide();
-        StringBuilder sb = new StringBuilder();
-        if (conflicts.isEmpty()) {
-            sb.append("No PCI conflicts detected across the network.");
-        } else {
-            long collisions = conflicts.stream().filter(c -> c.type().equals(PciConflict.COLLISION)).count();
-            long confusions = conflicts.stream().filter(c -> c.type().equals(PciConflict.CONFUSION)).count();
-            long mod3 = conflicts.stream().filter(c -> c.type().equals(PciConflict.MOD3)).count();
-            sb.append(String.format("Network PCI audit: %d conflict(s) — %d collision, %d confusion, %d mod-3.%n",
-                    conflicts.size(), collisions, confusions, mod3));
-            conflicts.stream()
-                    .sorted(Comparator.comparing(PciConflict::type))
-                    .forEach(cf -> sb.append(" - ").append(cf).append('\n'));
-        }
-        String result = sb.toString();
-        log("listPciConflicts", "(none)", result, start);
-        return result;
-    }
-
-    @Tool("Suggest a conflict-free PCI for a cell that avoids collision, confusion and mod-3 with its neighbours. Use when the user asks how to fix or re-plan a cell's PCI.")
-    public String suggestPciTool(String cellName) {
-        long start = System.currentTimeMillis();
-        PciCell c = cellRepo.findByCellName(cellName);
-        String result;
-        if (c == null) {
-            result = "Cell not found in PCI plan: " + cellName;
-        } else {
-            Integer suggestion = suggestPci(cellName);
-            result = suggestion == null
-                    ? "No conflict-free PCI available in 0..503 for " + cellName + " (neighbour set too dense)."
-                    : String.format("Re-plan %s from PCI %d to PCI %d (PSS group %d): avoids collision, confusion and mod-3 with all current neighbours.",
-                        cellName, c.getPci(), suggestion, suggestion % 3);
-        }
-        log("suggestPci", cellName, result, start);
-        return result;
-    }
-
-    // ─── logging helper (mirrors DropAnalysisTool) ──────────────────────────────
-
-    private void log(String tool, String input, String output, long startMs) {
-        try {
-            AgentLog entry = new AgentLog();
-            entry.setAgentName("pci");
-            entry.setToolCalled(tool);
-            entry.setToolInput(input);
-            entry.setToolOutput(output != null && output.length() > 2000
-                    ? output.substring(0, 2000) + "...[truncated]" : output);
-            entry.setLatencyMs(System.currentTimeMillis() - startMs);
-            logRepo.save(entry);
-        } catch (Exception e) {
-            System.err.println("[PciAnalysisTool] Failed to save log entry: " + e.getMessage());
-        }
     }
 }

@@ -33,6 +33,15 @@ public class CrossModuleCorrelator {
 
         boolean pciFatal = pci != null && (pci.hasTag("PCI_COLLISION") || pci.hasTag("PCI_CONFUSION"));
         boolean pciMod3  = pci != null && pci.hasTag("PCI_MOD3");
+
+        // "Not checked" and "checked, clean" are different facts and must not collapse into the
+        // same verdict. A module reports UNKNOWN when its backend was unreachable — it carries no
+        // tags, so without this distinction the absence of conflict tags would read as a clean
+        // plan and the correlator would rule identity out on the strength of a check that never
+        // ran. Same for a PCI module that is not registered at all.
+        boolean pciUnchecked = pci == null || ModuleFinding.UNKNOWN.equals(pci.severity());
+        boolean pciConfirmedClean = !pciUnchecked && !pciFatal && !pciMod3;
+
         String  pciKind  = pci == null ? "" :
                 pci.hasTag("PCI_COLLISION") ? "collision" :
                 pci.hasTag("PCI_CONFUSION") ? "confusion" :
@@ -68,8 +77,8 @@ public class CrossModuleCorrelator {
                 findings);
         }
 
-        // Rule 3 — coverage-driven drops, PCI clean: hand off to RF/coverage domain.
-        if (dropsActionable && coverage && (pci == null || !pciFatal && !pciMod3)) {
+        // Rule 3 — coverage-driven drops, PCI confirmed clean: hand off to RF/coverage domain.
+        if (dropsActionable && coverage && pciConfirmedClean) {
             return new RootCauseHypothesis(
                 String.format("Coverage/quality degradation (T310) on %s with a clean PCI plan.", cellName),
                 RootCauseHypothesis.MEDIUM,
@@ -81,14 +90,31 @@ public class CrossModuleCorrelator {
                 findings);
         }
 
-        // Rule 4 — drops elevated, PCI clean and non-RACH cause.
-        if (dropsActionable && (pci == null || (!pciFatal && !pciMod3))) {
+        // Rule 4 — drops elevated, PCI confirmed clean and non-RACH cause.
+        if (dropsActionable && pciConfirmedClean) {
             return new RootCauseHypothesis(
                 String.format("Elevated drops on %s are not explained by PCI — cause is within the drop domain.", cellName),
                 RootCauseHypothesis.LOW,
                 "The drop domain is actionable but the PCI plan is clean, so the dominant drop cause should be pursued "
                     + "directly (see the drop finding).",
                 List.of("Follow the drop module's dominant-cause guidance for this cell."),
+                findings);
+        }
+
+        // Rule 4b — drops elevated but the PCI domain never answered. The honest verdict is a
+        // partial one: report what the drop domain found and say plainly that identity is still
+        // open, rather than implying it was cleared.
+        if (dropsActionable && pciUnchecked) {
+            return new RootCauseHypothesis(
+                String.format("Elevated drops on %s, with the PCI domain unchecked.", cellName),
+                RootCauseHypothesis.LOW,
+                "The drop domain is actionable, but the PCI plan could not be verified for this cell — the "
+                    + "PCI backend did not answer. Identity conflicts are therefore neither confirmed nor ruled "
+                    + "out, and this diagnosis rests on the drop domain alone.",
+                List.of(
+                    "Follow the drop module's dominant-cause guidance for this cell.",
+                    "Re-run the diagnosis once the PCI planning backend is reachable, so identity can be "
+                        + "confirmed or ruled out."),
                 findings);
         }
 
