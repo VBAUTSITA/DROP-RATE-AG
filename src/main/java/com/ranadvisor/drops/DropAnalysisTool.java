@@ -1,5 +1,6 @@
 package com.ranadvisor.drops;
 
+import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
 import dev.langchain4j.data.embedding.Embedding;
 import dev.langchain4j.data.segment.TextSegment;
@@ -14,9 +15,15 @@ import com.ranadvisor.drops.entity.NrCellDrops;
 import com.ranadvisor.drops.repository.NrCellDropsRepository;
 import com.ranadvisor.logging.AgentLog;
 import com.ranadvisor.logging.AgentLogRepository;
+import com.ranadvisor.drops.timerange.TimeRange;
+import com.ranadvisor.drops.timerange.TimeRangeParser;
+import com.ranadvisor.pci.PciTrackWorkflow;
 
+import java.time.LocalDate;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @Component
@@ -33,6 +40,12 @@ public class DropAnalysisTool {
 
     @Autowired(required = false)
     private EmbeddingStore<TextSegment> embeddingStore;
+
+    @Autowired
+    private PciTrackWorkflow pciTrack;
+
+    @Autowired
+    private TimeRangeParser timeRanges;
 
     // ─── existing tools (unchanged logic, timing + log wrapper added) ─────────
 
@@ -82,6 +95,182 @@ public class DropAnalysisTool {
         }
         String result = sb.toString();
         log("getWorstCells", "topN=" + topN, result, start);
+        return result;
+    }
+
+    // ─── time-range tools ─────────────────────────────────────────────────────
+
+    @Tool("Report which period the drop data actually covers (earliest and latest sample, and how many cells). "
+        + "Call this FIRST whenever the user asks about a date, a month, or a relative period such as 'last week', "
+        + "so the answer is framed against the data that exists instead of assuming today's date.")
+    public String getDataCoverage() {
+        long start = System.currentTimeMillis();
+        TimeRange bounds = timeRanges.datasetBounds();
+        String result;
+        if (bounds == null) {
+            result = "No drop data is loaded.";
+        } else {
+            result = "Drop data covers " + bounds.start() + " to " + bounds.end()
+                   + " (" + dropsRepo.findDistinctCellNames().size() + " cells, hourly samples).\n"
+                   + "Relative periods such as 'last week' are resolved against the END of this data, "
+                   + "not against today's date.";
+        }
+        log("getDataCoverage", "(none)", result, start);
+        return result;
+    }
+
+    @Tool("Drop rate summary for one cell restricted to a period. Use this instead of getCellDropSummary "
+        + "whenever the user names a date, a month, or a relative window. The period accepts natural language: "
+        + "'2026-06-15', '2026-06-01 a 2026-06-15', 'ultimos 7 dias', 'ultima semana', 'junio', or 'todo'.")
+    public String getCellDropSummaryForPeriod(
+            @P("Exact cell name") String cellName,
+            @P("Period phrase, e.g. 'ultima semana', 'junio', '2026-06-01 a 2026-06-15'") String period) {
+
+        long start = System.currentTimeMillis();
+        TimeRange r = timeRanges.parse(period);
+        List<NrCellDrops> rows = dropsRepo
+                .findByCellNameAndSampleTimeBetweenOrderBySampleTimeAsc(cellName, r.start(), r.end());
+
+        String result = rows.isEmpty()
+                ? "No samples for " + cellName + " in period: " + r.label()
+                : "Period requested: " + r.label() + "\n" + buildSummary(cellName, rows);
+
+        log("getCellDropSummaryForPeriod", cellName + " | " + period, result, start);
+        return result;
+    }
+
+    @Tool("Day-by-day drop rate for one cell over a period. Use when the user asks WHEN a cell started "
+        + "degrading, for a trend, an evolution, or whether a problem is recent — a single averaged number "
+        + "hides the day it changed.")
+    public String getCellDailyTrend(
+            @P("Exact cell name") String cellName,
+            @P("Period phrase, e.g. 'ultimos 14 dias', 'junio', 'todo'") String period) {
+
+        long start = System.currentTimeMillis();
+        TimeRange r = timeRanges.parse(period);
+        List<NrCellDrops> rows = dropsRepo
+                .findByCellNameAndSampleTimeBetweenOrderBySampleTimeAsc(cellName, r.start(), r.end());
+
+        String result;
+        if (rows.isEmpty()) {
+            result = "No samples for " + cellName + " in period: " + r.label();
+        } else {
+            Map<LocalDate, List<NrCellDrops>> byDay = new LinkedHashMap<>();
+            for (NrCellDrops row : rows) {
+                byDay.computeIfAbsent(row.getSampleTime().toLocalDate(), d -> new java.util.ArrayList<>()).add(row);
+            }
+            StringBuilder sb = new StringBuilder();
+            sb.append("Daily drop rate for ").append(cellName).append(" — ").append(r.label()).append('\n');
+            for (Map.Entry<LocalDate, List<NrCellDrops>> e : byDay.entrySet()) {
+                Totals t = sumTotals(e.getValue());
+                double rate = t.sgnbRelTotal == 0 ? 0.0 : (t.totalAbnormal() * 100.0) / t.sgnbRelTotal;
+                sb.append(String.format("%s  drop=%.2f%%  releases=%d  dominant=%s%n",
+                        e.getKey(), rate, t.sgnbRelTotal, dominantCauseLabel(t)));
+            }
+            result = sb.toString();
+        }
+        log("getCellDailyTrend", cellName + " | " + period, result, start);
+        return result;
+    }
+
+    @Tool("Compare one cell between two periods, reporting the change in drop rate and whether the dominant "
+        + "cause changed. Use for before/after questions: after a change, after a date, 'did it get worse', "
+        + "'compare this week with last week'.")
+    public String compareCellPeriods(
+            @P("Exact cell name") String cellName,
+            @P("Baseline period, the earlier one") String periodA,
+            @P("Comparison period, the later one") String periodB) {
+
+        long start = System.currentTimeMillis();
+        TimeRange ra = timeRanges.parse(periodA);
+        TimeRange rb = timeRanges.parse(periodB);
+
+        List<NrCellDrops> rowsA = dropsRepo
+                .findByCellNameAndSampleTimeBetweenOrderBySampleTimeAsc(cellName, ra.start(), ra.end());
+        List<NrCellDrops> rowsB = dropsRepo
+                .findByCellNameAndSampleTimeBetweenOrderBySampleTimeAsc(cellName, rb.start(), rb.end());
+
+        String result;
+        if (rowsA.isEmpty() || rowsB.isEmpty()) {
+            result = "Cannot compare " + cellName + ": "
+                   + (rowsA.isEmpty() ? "no samples in A (" + ra.label() + "). " : "")
+                   + (rowsB.isEmpty() ? "no samples in B (" + rb.label() + ")." : "");
+        } else {
+            Totals ta = sumTotals(rowsA);
+            Totals tb = sumTotals(rowsB);
+            double rateA = ta.sgnbRelTotal == 0 ? 0.0 : (ta.totalAbnormal() * 100.0) / ta.sgnbRelTotal;
+            double rateB = tb.sgnbRelTotal == 0 ? 0.0 : (tb.totalAbnormal() * 100.0) / tb.sgnbRelTotal;
+            double delta = rateB - rateA;
+            String direction = delta > 0.5 ? "WORSE" : delta < -0.5 ? "BETTER" : "STABLE";
+            String causeA = dominantCauseLabel(ta);
+            String causeB = dominantCauseLabel(tb);
+
+            StringBuilder sb = new StringBuilder();
+            sb.append("Comparison for ").append(cellName).append('\n');
+            sb.append(String.format("A: %s -> drop=%.2f%%  releases=%d  dominant=%s%n",
+                    ra.label(), rateA, ta.sgnbRelTotal, causeA));
+            sb.append(String.format("B: %s -> drop=%.2f%%  releases=%d  dominant=%s%n",
+                    rb.label(), rateB, tb.sgnbRelTotal, causeB));
+            sb.append(String.format("Change: %+.2f percentage points -> %s%n", delta, direction));
+            sb.append(causeA.equals(causeB)
+                    ? "Dominant cause unchanged (" + causeA + ")."
+                    : "Dominant cause CHANGED: " + causeA + " -> " + causeB
+                      + ". A different failure mode usually means a different fix.");
+            result = sb.toString();
+        }
+        log("compareCellPeriods", cellName + " | " + periodA + " vs " + periodB, result, start);
+        return result;
+    }
+
+    @Tool("Return the N cells with the highest drop rates within a period. Use instead of getWorstCells "
+        + "whenever the user restricts the question to a date, month or relative window.")
+    public String getWorstCellsForPeriod(
+            @P("How many cells to return, max 10") int topN,
+            @P("Period phrase, e.g. 'ultima semana', 'junio', 'todo'") String period) {
+
+        long start = System.currentTimeMillis();
+        TimeRange r = timeRanges.parse(period);
+        int cap = Math.min(topN, 10);
+
+        List<CellRate> rates = dropsRepo.findDistinctCellNames().stream()
+            .map(name -> {
+                List<NrCellDrops> rows = dropsRepo
+                        .findByCellNameAndSampleTimeBetweenOrderBySampleTimeAsc(name, r.start(), r.end());
+                if (rows.isEmpty()) return null;
+                Totals t = sumTotals(rows);
+                double rate = t.sgnbRelTotal == 0 ? 0.0 : (t.totalAbnormal() * 100.0) / t.sgnbRelTotal;
+                return new CellRate(name, rate, dominantCauseLabel(t));
+            })
+            .filter(java.util.Objects::nonNull)
+            .sorted(Comparator.comparingDouble(CellRate::dropRate).reversed())
+            .collect(Collectors.toList());
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("Top ").append(cap).append(" cells by drop rate — ").append(r.label()).append('\n');
+        for (int i = 0; i < Math.min(cap, rates.size()); i++) {
+            CellRate c = rates.get(i);
+            sb.append(String.format("%d. %s  Drop Rate: %.2f%%  Dominant: %s%n",
+                    i + 1, c.cellName(), c.dropRate(), c.dominantLabel()));
+        }
+        if (rates.isEmpty()) sb.append("No cells have samples in this period.");
+        String result = sb.toString();
+        log("getWorstCellsForPeriod", "topN=" + topN + " | " + period, result, start);
+        return result;
+    }
+
+    // ─── cross-domain tool: PCI ────────────────────────────────────────────────
+
+    @Tool("Pursue the PCI (Physical Cell Identity) track for a cell: audit its PCI plan for "
+        + "collision / confusion / mod-3 conflicts and, only when a conflict is found, compute a "
+        + "conflict-free PCI proposal with the planner's reasoning. Call this when getCellDropSummary "
+        + "reports an access/RACH-dominated cause such as 'RA Problem', or whenever the user asks "
+        + "whether PCI is behind the drops or asks for a new PCI. A PCI collision or confusion makes "
+        + "the UE unable to resolve which cell it is talking to, which shows up precisely as RACH and "
+        + "handover failures. This only reads and simulates — it never changes the network.")
+    public String suggestPciFixForCell(String cellName) {
+        long start = System.currentTimeMillis();
+        String result = pciTrack.run(cellName);
+        log("suggestPciFixForCell", cellName, result, start);
         return result;
     }
 

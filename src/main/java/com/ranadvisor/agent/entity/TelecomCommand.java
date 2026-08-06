@@ -18,7 +18,9 @@ public class TelecomCommand {
 
     private String category;
 
-    @Column(columnDefinition = "TEXT")
+    // VARCHAR2(4000) rather than CLOB: TelecomCommandRepository.findByKeyword does
+    // LOWER(...) LIKE on this column, and Hibernate rejects that against a CLOB path.
+    @Column(length = 4000)
     private String description;
 
     // Getters
