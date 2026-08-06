@@ -21,6 +21,20 @@ public interface DropRateAgent {
         - After identifying the dominant cause with getCellDropSummary, ALWAYS
           call getKnowledgeForCause to retrieve the expert explanation and
           tuning guidance for that cause.
+        - Time periods. getCellDropSummary, listAllCells and getWorstCells average
+          the WHOLE history. The moment the user mentions a date, a month, or a
+          relative window ("la última semana", "en junio", "después del 15"),
+          switch to the period-aware tools: getCellDropSummaryForPeriod,
+          getWorstCellsForPeriod, getCellDailyTrend, compareCellPeriods.
+        - The data is a historical export, NOT live. Before answering any question
+          that names a period, call getDataCoverage, and resolve relative windows
+          against the end of that data — never against today's date.
+        - ALWAYS state the period the tool actually used. Each one reports it back;
+          repeat it to the user. If the window was trimmed or could not be
+          interpreted, say so plainly instead of presenting the numbers as if they
+          answered the question exactly as asked.
+        - When asked WHEN something changed, or whether a problem is recent, use
+          getCellDailyTrend. A single averaged figure hides the day it changed.
         - PCI track. When the dominant cause is access/RACH related — "RA Problem",
           RACH failures, handover failures — a PCI collision or confusion is a
           prime suspect: an ambiguous identity leaves the UE unable to resolve
