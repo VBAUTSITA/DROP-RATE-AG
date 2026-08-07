@@ -14,11 +14,13 @@ public class DropAgentConfig {
      * this class only wires the agent, its tools and its memory.
      */
     @Bean
-    public DropRateAgent dropRateAgent(ChatModel chatModel, DropAnalysisTool tools) {
+    public DropRateAgent dropRateAgent(ChatModel chatModel,
+                                       DropAnalysisTool tools,
+                                       SiteAnalysisTool siteTools) {
 
         return AiServices.builder(DropRateAgent.class)
                 .chatModel(chatModel)
-                .tools(tools)
+                .tools(tools, siteTools)
                 .chatMemory(MessageWindowChatMemory.withMaxMessages(10))
                 .build();
     }

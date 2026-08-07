@@ -1,11 +1,17 @@
 package com.ranadvisor.pci;
 
+import com.ranadvisor.drops.entity.NrCellDrops;
+import com.ranadvisor.drops.metrics.DropTotals;
+import com.ranadvisor.drops.repository.NrCellDropsRepository;
+import com.ranadvisor.pci.PciConflict;
 import com.ranadvisor.pci.planner.PciAudit;
 import com.ranadvisor.pci.planner.PciPlannerPort;
 import com.ranadvisor.pci.planner.PciPlannerUnavailableException;
 import com.ranadvisor.pci.planner.PciProposal;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+
+import java.util.List;
 
 /**
  * The identify → re-plan sequence, in one place because two callers need it: the
@@ -27,6 +33,8 @@ public class PciTrackWorkflow {
 
     @Autowired private PciPlannerPort pciPlanner;
     @Autowired private PciPlannerTools pciTools;
+    @Autowired private NrCellDropsRepository dropsRepo;
+    @Autowired private PciTimelineCorrelator timeline;
 
     public String run(String cellName) {
         PciAudit audit;
@@ -54,6 +62,13 @@ public class PciTrackWorkflow {
         }
 
         sb.append("  ").append(pciTools.renderAudit(audit, cellName).replace("\n", "\n  ")).append("\n\n");
+
+        String impact = renderBothSides(audit, cellName);
+        if (!impact.isEmpty()) sb.append(impact).append('\n');
+
+        String when = timeline.correlate(cellName, audit);
+        if (!when.isEmpty()) sb.append(when).append('\n');
+
         sb.append("Step 2 — re-plan\n");
 
         PciProposal proposal;
@@ -68,5 +83,48 @@ public class PciTrackWorkflow {
 
         sb.append("  ").append(pciTools.renderProposal(proposal).replace("\n", "\n  "));
         return sb.toString();
+    }
+
+    /**
+     * A collision or confusion has two victims, not one. The conflict list names the partner
+     * cell but says nothing about how badly it is doing, so the two ends read as unrelated
+     * problems and get two tickets — and after the re-plan, nobody checks whether the second
+     * one recovered.
+     *
+     * <p>This block pulls the partner's drop rate over the whole dataset and prints both sides
+     * together. It is deliberately whole-history rather than windowed: this is an impact
+     * statement about a configuration fault, not a trend, and the caller may not have supplied
+     * a period at all.
+     */
+    private String renderBothSides(PciAudit audit, String cellName) {
+        StringBuilder sb = new StringBuilder();
+
+        for (PciConflict c : audit.conflicts()) {
+            if (!PciConflict.COLLISION.equals(c.type()) && !PciConflict.CONFUSION.equals(c.type())) {
+                continue;   // mod-3 degrades quality; it does not make two cells indistinguishable
+            }
+            String partner = cellName.equals(c.cellA()) ? c.cellB() : c.cellA();
+            if (partner == null || partner.equals(cellName)) continue;
+
+            String self = dropRateOf(cellName);
+            String other = dropRateOf(partner);
+            if (self == null && other == null) continue;
+
+            sb.append("Both sides of this ").append(c.type().toLowerCase()).append(":\n");
+            sb.append("  ").append(cellName).append("  ").append(self == null ? "no drop data" : self).append('\n');
+            sb.append("  ").append(partner).append("  ").append(other == null ? "no drop data" : other).append('\n');
+            sb.append("  These are one fault with two victims. Track them as a single change: the "
+                    + "re-plan should improve both, and if only one recovers the conflict was not the "
+                    + "whole story.\n");
+        }
+        return sb.toString();
+    }
+
+    /** Drop rate of a cell over all loaded samples, or null when the cell has no drop data. */
+    private String dropRateOf(String cellName) {
+        List<NrCellDrops> rows = dropsRepo.findByCellNameOrderBySampleTimeAsc(cellName);
+        if (rows.isEmpty()) return null;
+        DropTotals t = DropTotals.of(rows);
+        return String.format("drop=%.2f%% (%s), dominant=%s", t.dropRate(), t.severity(), t.dominantShort());
     }
 }

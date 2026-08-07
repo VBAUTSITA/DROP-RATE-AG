@@ -12,6 +12,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import com.ranadvisor.drops.entity.NrCellDrops;
+import com.ranadvisor.drops.metrics.DropTotals;
 import com.ranadvisor.drops.repository.NrCellDropsRepository;
 import com.ranadvisor.logging.AgentLog;
 import com.ranadvisor.logging.AgentLogRepository;
@@ -79,9 +80,9 @@ public class DropAnalysisTool {
         List<CellRate> rates = cells.stream()
             .map(cellName -> {
                 List<NrCellDrops> rows = dropsRepo.findByCellNameOrderBySampleTimeAsc(cellName);
-                Totals t = sumTotals(rows);
-                double dropRate = t.sgnbRelTotal == 0 ? 0.0 : (t.totalAbnormal() * 100.0) / t.sgnbRelTotal;
-                return new CellRate(cellName, dropRate, dominantCauseLabel(t));
+                DropTotals t = DropTotals.of(rows);
+                double dropRate = t.dropRate();
+                return new CellRate(cellName, dropRate, t.dominantShort());
             })
             .sorted(Comparator.comparingDouble(CellRate::dropRate).reversed())
             .collect(Collectors.toList());
@@ -162,10 +163,10 @@ public class DropAnalysisTool {
             StringBuilder sb = new StringBuilder();
             sb.append("Daily drop rate for ").append(cellName).append(" — ").append(r.label()).append('\n');
             for (Map.Entry<LocalDate, List<NrCellDrops>> e : byDay.entrySet()) {
-                Totals t = sumTotals(e.getValue());
-                double rate = t.sgnbRelTotal == 0 ? 0.0 : (t.totalAbnormal() * 100.0) / t.sgnbRelTotal;
+                DropTotals t = DropTotals.of(e.getValue());
+                double rate = t.dropRate();
                 sb.append(String.format("%s  drop=%.2f%%  releases=%d  dominant=%s%n",
-                        e.getKey(), rate, t.sgnbRelTotal, dominantCauseLabel(t)));
+                        e.getKey(), rate, t.sgnbRelTotal, t.dominantShort()));
             }
             result = sb.toString();
         }
@@ -196,14 +197,14 @@ public class DropAnalysisTool {
                    + (rowsA.isEmpty() ? "no samples in A (" + ra.label() + "). " : "")
                    + (rowsB.isEmpty() ? "no samples in B (" + rb.label() + ")." : "");
         } else {
-            Totals ta = sumTotals(rowsA);
-            Totals tb = sumTotals(rowsB);
-            double rateA = ta.sgnbRelTotal == 0 ? 0.0 : (ta.totalAbnormal() * 100.0) / ta.sgnbRelTotal;
-            double rateB = tb.sgnbRelTotal == 0 ? 0.0 : (tb.totalAbnormal() * 100.0) / tb.sgnbRelTotal;
+            DropTotals ta = DropTotals.of(rowsA);
+            DropTotals tb = DropTotals.of(rowsB);
+            double rateA = ta.dropRate();
+            double rateB = tb.dropRate();
             double delta = rateB - rateA;
             String direction = delta > 0.5 ? "WORSE" : delta < -0.5 ? "BETTER" : "STABLE";
-            String causeA = dominantCauseLabel(ta);
-            String causeB = dominantCauseLabel(tb);
+            String causeA = ta.dominantShort();
+            String causeB = tb.dominantShort();
 
             StringBuilder sb = new StringBuilder();
             sb.append("Comparison for ").append(cellName).append('\n');
@@ -237,9 +238,9 @@ public class DropAnalysisTool {
                 List<NrCellDrops> rows = dropsRepo
                         .findByCellNameAndSampleTimeBetweenOrderBySampleTimeAsc(name, r.start(), r.end());
                 if (rows.isEmpty()) return null;
-                Totals t = sumTotals(rows);
-                double rate = t.sgnbRelTotal == 0 ? 0.0 : (t.totalAbnormal() * 100.0) / t.sgnbRelTotal;
-                return new CellRate(name, rate, dominantCauseLabel(t));
+                DropTotals t = DropTotals.of(rows);
+                double rate = t.dropRate();
+                return new CellRate(name, rate, t.dominantShort());
             })
             .filter(java.util.Objects::nonNull)
             .sorted(Comparator.comparingDouble(CellRate::dropRate).reversed())
@@ -339,117 +340,28 @@ public class DropAnalysisTool {
 
     private record CellRate(String cellName, double dropRate, String dominantLabel) {}
 
-    private static class Totals {
-        long menbScgfail;
-        long menbScgfailRaproblem;
-        long menbScgfailRlcmaxnumretx;
-        long menbScgfailRecfgfail;
-        long menbScgfailSyncrecfgfail;
-        long menbScgfailT310expiry;
-        long sgnbAbnrel;
-        long sgnbAbnrelRadio;
-        long sgnbAbnrelRadioUelost;
-        long sgnbAbnrelRadioUlsyncfail;
-        long sgnbAbnrelTrans;
-        long sgnbRelTotal;
-
-        long totalAbnormal() { return menbScgfail + sgnbAbnrel; }
-    }
-
-    private Totals sumTotals(List<NrCellDrops> rows) {
-        Totals t = new Totals();
-        for (NrCellDrops r : rows) {
-            t.menbScgfail += nz(r.getMenbScgfail());
-            t.menbScgfailRaproblem += nz(r.getMenbScgfailRaproblem());
-            t.menbScgfailRlcmaxnumretx += nz(r.getMenbScgfailRlcmaxnumretx());
-            t.menbScgfailRecfgfail += nz(r.getMenbScgfailRecfgfail());
-            t.menbScgfailSyncrecfgfail += nz(r.getMenbScgfailSyncrecfgfail());
-            t.menbScgfailT310expiry += nz(r.getMenbScgfailT310expiry());
-            t.sgnbAbnrel += nz(r.getSgnbAbnrel());
-            t.sgnbAbnrelRadio += nz(r.getSgnbAbnrelRadio());
-            t.sgnbAbnrelRadioUelost += nz(r.getSgnbAbnrelRadioUelost());
-            t.sgnbAbnrelRadioUlsyncfail += nz(r.getSgnbAbnrelRadioUlsyncfail());
-            t.sgnbAbnrelTrans += nz(r.getSgnbAbnrelTrans());
-            t.sgnbRelTotal += nz(r.getSgnbRelTotal());
-        }
-        return t;
-    }
-
-    private long nz(Long v) {
-        return v == null ? 0L : v;
-    }
-
-    private String dominantCauseColumn(Totals t) {
-        String dominant = "menbScgfailRaproblem";
-        long max = t.menbScgfailRaproblem;
-
-        if (t.menbScgfailRlcmaxnumretx > max) { dominant = "menbScgfailRlcmaxnumretx"; max = t.menbScgfailRlcmaxnumretx; }
-        if (t.menbScgfailRecfgfail > max) { dominant = "menbScgfailRecfgfail"; max = t.menbScgfailRecfgfail; }
-        if (t.menbScgfailSyncrecfgfail > max) { dominant = "menbScgfailSyncrecfgfail"; max = t.menbScgfailSyncrecfgfail; }
-        if (t.menbScgfailT310expiry > max) { dominant = "menbScgfailT310expiry"; max = t.menbScgfailT310expiry; }
-        if (t.sgnbAbnrelRadio > max) { dominant = "sgnbAbnrelRadio"; max = t.sgnbAbnrelRadio; }
-        if (t.sgnbAbnrelTrans > max) { dominant = "sgnbAbnrelTrans"; max = t.sgnbAbnrelTrans; }
-
-        return dominant;
-    }
-
-    private long dominantCauseCount(Totals t, String column) {
-        return switch (column) {
-            case "menbScgfailRaproblem" -> t.menbScgfailRaproblem;
-            case "menbScgfailRlcmaxnumretx" -> t.menbScgfailRlcmaxnumretx;
-            case "menbScgfailRecfgfail" -> t.menbScgfailRecfgfail;
-            case "menbScgfailSyncrecfgfail" -> t.menbScgfailSyncrecfgfail;
-            case "menbScgfailT310expiry" -> t.menbScgfailT310expiry;
-            case "sgnbAbnrelRadio" -> t.sgnbAbnrelRadio;
-            case "sgnbAbnrelTrans" -> t.sgnbAbnrelTrans;
-            default -> 0L;
-        };
-    }
-
-    private String dominantCauseLabel(Totals t) {
-        return labelFor(dominantCauseColumn(t));
-    }
-
-    private String labelFor(String column) {
-        return switch (column) {
-            case "menbScgfailRaproblem" -> "RA Problem (RACH failure during access or handover)";
-            case "menbScgfailRlcmaxnumretx" -> "RLC Max Retransmissions (DL radio quality)";
-            case "menbScgfailRecfgfail" -> "Reconfiguration Failure (UE config issue)";
-            case "menbScgfailSyncrecfgfail" -> "Sync Reconfiguration Failure";
-            case "menbScgfailT310expiry" -> "T310 Expiry (DL coverage/quality degradation)";
-            case "sgnbAbnrelRadio" -> "SgNB Radio Failure (UE lost or UL sync fail)";
-            case "sgnbAbnrelTrans" -> "Transport Failure (X2-U interface issue)";
-            default -> "Unknown";
-        };
-    }
-
     private String buildSummary(String cellName, List<NrCellDrops> rows) {
-        Totals t = sumTotals(rows);
-        long totalAbnormal = t.totalAbnormal();
-        double dropRate = t.sgnbRelTotal == 0 ? 0.0 : (totalAbnormal * 100.0) / t.sgnbRelTotal;
-
-        String dominantColumn = dominantCauseColumn(t);
-        long dominantCount = dominantCauseCount(t, dominantColumn);
-        String dominantLabel = labelFor(dominantColumn);
-
-        String severity = dropRate > 15 ? "CRITICAL" : dropRate > 5 ? "WARNING" : "OK";
-
-        var minTime = rows.get(0).getSampleTime();
-        var maxTime = rows.get(rows.size() - 1).getSampleTime();
+        DropTotals t = DropTotals.of(rows);
 
         StringBuilder sb = new StringBuilder();
         sb.append("Cell: ").append(cellName).append('\n');
-        sb.append("Period: ").append(minTime).append(" to ").append(maxTime).append('\n');
-        sb.append("Total Releases: ").append(t.sgnbRelTotal).append('\n');
-        sb.append("Abnormal Releases: ").append(totalAbnormal).append('\n');
-        sb.append(String.format("Drop Rate: %.2f%%%n", dropRate));
-        sb.append("Dominant Cause: ").append(dominantLabel).append(" (").append(dominantCount).append(" events)\n");
-        sb.append(String.format("MeNB ScgFail breakdown → RAProblem:%d | RlcMaxRetx:%d | RecfgFail:%d | SyncRecfgFail:%d | T310Expiry:%d%n",
+        sb.append("Period: ").append(t.firstSample).append(" to ").append(t.lastSample)
+          .append("  (").append(t.samples).append(" hourly samples)\n");
+
+        // Rates first: a four-week sum of hourly counters is a number no operator uses,
+        // and it hides whether the problem is steady or new. Totals stay for auditability.
+        sb.append(String.format("Drop Rate: %.2f%%   Severity: %s%n", t.dropRate(), t.severity()));
+        sb.append(String.format("Releases: %,.0f/hour   Abnormal: %,.0f/hour  (%,.0f/day)%n",
+                t.releasesPerHour(), t.abnormalPerHour(), t.abnormalPerDay()));
+        sb.append(String.format("Dominant Cause: %s (%,d events over the window)%n",
+                t.dominantLabel(), t.dominantCount()));
+        sb.append(String.format("MeNB ScgFail breakdown → RAProblem:%,d | RlcMaxRetx:%,d | RecfgFail:%,d | SyncRecfgFail:%,d | T310Expiry:%,d%n",
             t.menbScgfailRaproblem, t.menbScgfailRlcmaxnumretx, t.menbScgfailRecfgfail,
             t.menbScgfailSyncrecfgfail, t.menbScgfailT310expiry));
-        sb.append(String.format("SgNB AbnRel breakdown  → Radio:%d (UeLost:%d ULSyncFail:%d) | Transport:%d%n",
+        sb.append(String.format("SgNB AbnRel breakdown  → Radio:%,d (UeLost:%,d ULSyncFail:%,d) | Transport:%,d%n",
             t.sgnbAbnrelRadio, t.sgnbAbnrelRadioUelost, t.sgnbAbnrelRadioUlsyncfail, t.sgnbAbnrelTrans));
-        sb.append("Severity: ").append(severity);
+        sb.append(String.format("Window totals (for audit): %,d releases, %,d abnormal",
+                t.sgnbRelTotal, t.totalAbnormal()));
 
         return sb.toString();
     }

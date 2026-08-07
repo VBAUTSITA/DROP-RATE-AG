@@ -1,13 +1,16 @@
 package com.ranadvisor.pci;
 
 import com.ranadvisor.pci.entity.PciCell;
+import com.ranadvisor.pci.entity.PciChange;
 import com.ranadvisor.pci.entity.PciNeighbor;
 import com.ranadvisor.pci.repository.PciCellRepository;
+import com.ranadvisor.pci.repository.PciChangeRepository;
 import com.ranadvisor.pci.repository.PciNeighborRepository;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -34,10 +37,13 @@ public class PciDataLoader {
 
     private final PciCellRepository cellRepo;
     private final PciNeighborRepository neighborRepo;
+    private final PciChangeRepository changeRepo;
 
-    public PciDataLoader(PciCellRepository cellRepo, PciNeighborRepository neighborRepo) {
+    public PciDataLoader(PciCellRepository cellRepo, PciNeighborRepository neighborRepo,
+                         PciChangeRepository changeRepo) {
         this.cellRepo = cellRepo;
         this.neighborRepo = neighborRepo;
+        this.changeRepo = changeRepo;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -96,8 +102,62 @@ public class PciDataLoader {
         );
         for (String[] e : edges) neighborRepo.save(new PciNeighbor(e[0], e[1]));
 
-        System.out.println("[PciDataLoader] Seeded " + plan.length + " PCI cells and "
-                + edges.size() + " inter-site neighbour relations.");
+        seedChangeHistory();
+
+        System.out.println("[PciDataLoader] Seeded " + plan.length + " PCI cells, "
+                + edges.size() + " inter-site neighbour relations and "
+                + changeRepo.count() + " PCI change records.");
+    }
+
+    /**
+     * Seeds when each conflicting PCI was introduced, so the agent can test whether a
+     * conflict actually precedes a degradation instead of assuming it does.
+     *
+     * <p>Two of the three seeded conflicts are deliberately old and one is recent. That is
+     * the point: an agent that reports every conflict as the cause of every degradation is
+     * not diagnosing, and the only way to see the difference is to have both cases present.
+     *
+     * <ul>
+     *   <li>ARR40312C1 took PCI 168 on <b>2026-06-18</b> — the drop data runs to 30 June, so
+     *       this change sits inside the observed window and can be correlated.</li>
+     *   <li>ARR39092C1 has had PCI 110 since <b>2024</b>; its confusion is a long-standing
+     *       condition and cannot explain anything that started this year.</li>
+     *   <li>ARR18911C1 has had PCI 10 since <b>2023</b>; the mod-3 is equally old.</li>
+     * </ul>
+     */
+    private void seedChangeHistory() {
+        List<PciChange> history = List.of(
+            // The one that matters: introduced mid-window, right before the observed jump.
+            new PciChange("ARR40312C1_Moran_Uribe", 205, 168,
+                    LocalDateTime.of(2026, 6, 18, 3, 20),
+                    "seed:planning-tool", "Capacity re-plan of the Moran Uribe cluster"),
+            new PciChange("ARR40312C1_Moran_Uribe", null, 205,
+                    LocalDateTime.of(2024, 3, 11, 9, 0),
+                    "seed:initial", "Initial commissioning"),
+
+            // The partner has held 168 since commissioning, so the collision starts on the
+            // date above, not on this one.
+            new PciChange("ARR39931C1_Puente_Quinones", null, 168,
+                    LocalDateTime.of(2023, 11, 2, 10, 30),
+                    "seed:initial", "Initial commissioning"),
+
+            // Long-standing confusion: predates the drop dataset by well over a year.
+            new PciChange("ARR39092C1_Azangaro", null, 110,
+                    LocalDateTime.of(2024, 1, 15, 8, 0),
+                    "seed:initial", "Initial commissioning"),
+            new PciChange("ARR38892C1_Melgar", null, 110,
+                    LocalDateTime.of(2024, 2, 20, 8, 0),
+                    "seed:initial", "Initial commissioning"),
+
+            // Long-standing mod-3.
+            new PciChange("ARR18911C1_Jm_Cuadros", null, 10,
+                    LocalDateTime.of(2023, 5, 4, 12, 0),
+                    "seed:initial", "Initial commissioning"),
+            new PciChange("ARR38551C1_Parra", null, 40,
+                    LocalDateTime.of(2023, 6, 18, 12, 0),
+                    "seed:initial", "Initial commissioning")
+        );
+        changeRepo.saveAll(history);
     }
 
     /** C3 cells sit on the high-band carrier; everything else on the low-band carrier. */

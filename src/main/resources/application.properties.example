@@ -112,3 +112,11 @@ pci.planner.backend=local
 # timeout is deliberately much longer than the connect timeout.
 #pci.planner.connect-timeout-ms=3000
 #pci.planner.read-timeout-ms=30000
+
+# -----------------------------
+# RAG ON ORACLE
+# -----------------------------
+# pgvector is PostgreSQL-only, but RAG is the layer that keeps expert advice tied to the
+# knowledge base instead of to the model's own recall. RagConfig now falls back to an
+# in-memory embedding store on any non-PostgreSQL datasource, so RAG stays ON: 23 chunks
+# re-embedded at every startup. No property needed — it is automatic.

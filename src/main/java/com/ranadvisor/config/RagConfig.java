@@ -4,6 +4,7 @@ import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.model.embedding.EmbeddingModel;
 import dev.langchain4j.model.googleai.GoogleAiEmbeddingModel;
 import dev.langchain4j.store.embedding.EmbeddingStore;
+import dev.langchain4j.store.embedding.inmemory.InMemoryEmbeddingStore;
 import dev.langchain4j.store.embedding.pgvector.PgVectorEmbeddingStore;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -29,13 +30,17 @@ public class RagConfig {
             @Value("${spring.datasource.password}") String dbPassword,
             @Value("${rag.embedding-dimension:768}") int dimension) {
 
-        // pgvector is PostgreSQL-only. On any other database (e.g. Oracle) there is no
-        // embedding store: RAG degrades to "not available" and the rest of the app runs.
+        // pgvector is PostgreSQL-only. On Oracle it cannot be used at all — but returning
+        // null here turned off RAG entirely, and RAG is the layer that keeps the agent's
+        // expert advice tied to the knowledge base instead of to the model's own recall.
+        // With it off, every tuning recommendation was ungrounded improvisation that read
+        // exactly like a sourced answer. The knowledge base is 23 chunks, so holding the
+        // vectors in memory costs almost nothing and restores the grounding.
         if (!datasourceUrl.startsWith("jdbc:postgresql://")) {
-            System.out.println("[RagConfig] Datasource is not PostgreSQL — pgvector RAG disabled.");
-            System.out.println("[RagConfig] The app runs normally; getKnowledgeForCause will report "
-                    + "the knowledge base as unavailable.");
-            return null;
+            System.out.println("[RagConfig] Datasource is not PostgreSQL — pgvector unavailable.");
+            System.out.println("[RagConfig] Falling back to InMemoryEmbeddingStore: RAG stays ON, "
+                    + "re-embedded at every startup (a few seconds, ~23 chunks).");
+            return new InMemoryEmbeddingStore<>();
         }
 
         try {

@@ -21,6 +21,20 @@ public interface DropRateAgent {
         - After identifying the dominant cause with getCellDropSummary, ALWAYS
           call getKnowledgeForCause to retrieve the expert explanation and
           tuning guidance for that cause.
+        - Sites before cells. For any network-wide question ("which are the worst",
+          "where are the problems", "what do we prioritise"), call getWorstSites
+          FIRST. Several bad cells usually belong to the same site, and that
+          changes the fix. If a site is flagged MULTI-SECTOR, say so explicitly:
+          two or more sectors failing the same way points at something they share
+          (transport, baseband, sync, power), not at each sector having its own
+          RF or PCI fault. Present that as a hypothesis to check, never as a
+          confirmed cause — this agent sees PM counters only, not alarms,
+          transport KPIs or uplink interference.
+        - When the PCI track returns a timeline verdict, report it. PRE-EXISTING
+          means the conflict is real but does NOT explain this degradation, and
+          saying otherwise sends someone to change a PCI while the actual fault
+          stays. SUPPORTED means the timing is consistent — still correlation,
+          not proof. UNKNOWN means say so.
         - Time periods. getCellDropSummary, listAllCells and getWorstCells average
           the WHOLE history. The moment the user mentions a date, a month, or a
           relative window ("la última semana", "en junio", "después del 15"),

@@ -3,6 +3,7 @@ package com.ranadvisor.drops.repository;
 import com.ranadvisor.drops.entity.NrCellDrops;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -28,4 +29,16 @@ public interface NrCellDropsRepository extends JpaRepository<NrCellDrops, Long> 
     /** Dataset upper bound. */
     @Query("SELECT MAX(d.sampleTime) FROM NrCellDrops d")
     LocalDateTime findLatestSampleTime();
+
+    /** Site inventory, for the site-level aggregation. */
+    @Query("SELECT DISTINCT d.gnodebName FROM NrCellDrops d ORDER BY d.gnodebName")
+    List<String> findDistinctSiteNames();
+
+    /** Which cells belong to a site — the sector list used to spot multi-sector patterns. */
+    @Query("SELECT DISTINCT d.cellName FROM NrCellDrops d WHERE d.gnodebName = :site ORDER BY d.cellName")
+    List<String> findCellNamesBySite(@Param("site") String site);
+
+    /** The site a cell belongs to, or null when the cell is unknown. */
+    @Query("SELECT MAX(d.gnodebName) FROM NrCellDrops d WHERE d.cellName = :cellName")
+    String findSiteOfCell(@Param("cellName") String cellName);
 }
