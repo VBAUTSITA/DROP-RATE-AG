@@ -26,7 +26,7 @@
 			<dependency>
 				<groupId>dev.langchain4j</groupId>
 				<artifactId>langchain4j-bom</artifactId>
-				<version>1.0.0-beta1</version>
+				<version>1.18.1</version>
 				<type>pom</type>
 				<scope>import</scope>
 			</dependency>
@@ -47,10 +47,18 @@
 			<artifactId>spring-boot-starter-data-jpa</artifactId>
 		</dependency>
 
-		<!-- PostgreSQL Driver -->
+		<!-- PostgreSQL Driver (home setup) -->
 		<dependency>
 			<groupId>org.postgresql</groupId>
 			<artifactId>postgresql</artifactId>
+			<scope>runtime</scope>
+		</dependency>
+
+		<!-- Oracle JDBC Driver (office setup). Both drivers can sit on the
+		     classpath at once; Spring picks one from spring.datasource.url. -->
+		<dependency>
+			<groupId>com.oracle.database.jdbc</groupId>
+			<artifactId>ojdbc11</artifactId>
 			<scope>runtime</scope>
 		</dependency>
 
@@ -60,17 +68,37 @@
 			<artifactId>langchain4j</artifactId>
 		</dependency>
 
-		<!-- LangChain4j OpenAI (OpenRouter is OpenAI-compatible) -->
+		<!-- LangChain4j Google AI Gemini (native protocol) — the ONLY LLM
+		     provider on this branch.
+		     langchain4j-open-ai is deliberately absent: this build runs on a
+		     corporate network where outbound calls to public AI endpoints other
+		     than Google's are not permitted. Leaving the OpenAI client off the
+		     classpath makes such a call impossible rather than merely unlikely.
+		     Do not add it back on this branch.
+		     The native API (not Google's OpenAI-compatible endpoint) is required
+		     for tool calling: it carries thought_signature, which the
+		     OpenAI-compatible schema cannot represent. -->
 		<dependency>
 			<groupId>dev.langchain4j</groupId>
-			<artifactId>langchain4j-open-ai</artifactId>
+			<artifactId>langchain4j-google-ai-gemini</artifactId>
 		</dependency>
 
-		<!-- LangChain4j Spring Boot starter -->
+		<!-- Pulled in transitively at runtime scope by the Gemini module; declared
+		     explicitly so ChatModelConfig can compile against JdkHttpClientBuilder
+		     and hand the underlying java.net.http.HttpClient a ProxySelector. -->
 		<dependency>
 			<groupId>dev.langchain4j</groupId>
-			<artifactId>langchain4j-spring-boot-starter</artifactId>
+			<artifactId>langchain4j-http-client-jdk</artifactId>
 		</dependency>
+
+<!-- langchain4j-spring-boot-starter is deliberately NOT declared.
+		     Nothing here uses its autoconfiguration (no @AiService, no
+		     langchain4j.* properties) — every bean is built explicitly in
+		     ChatModelConfig / AiConfig / DropAgentConfig / RagConfig.
+		     Its RagAutoConfig eagerly builds a ContentRetriever from the
+		     EmbeddingStore bean, which fails with "embeddingStore cannot be
+		     null" on Oracle, where RagConfig intentionally returns null
+		     because pgvector is PostgreSQL-only. -->
 
 		<!-- LangChain4j pgvector embedding store (RAG) -->
 		<dependency>

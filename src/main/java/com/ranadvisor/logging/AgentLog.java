@@ -16,10 +16,12 @@ public class AgentLog {
     @Column(name = "tool_called")
     private String toolCalled;
 
-    @Column(name = "tool_input", columnDefinition = "TEXT")
+    @Lob
+    @Column(name = "tool_input")
     private String toolInput;
 
-    @Column(name = "tool_output", columnDefinition = "TEXT")
+    @Lob
+    @Column(name = "tool_output")
     private String toolOutput;
 
     @Column(name = "latency_ms")
