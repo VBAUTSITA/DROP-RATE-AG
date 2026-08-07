@@ -1,18 +1,14 @@
 package com.ranadvisor.config;
 
-import dev.langchain4j.http.client.HttpClientBuilder;
-import dev.langchain4j.http.client.jdk.JdkHttpClientBuilder;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.googleai.GeminiThinkingConfig;
 import dev.langchain4j.model.googleai.GoogleAiGeminiChatModel;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
 
-import java.net.InetSocketAddress;
-import java.net.ProxySelector;
-import java.net.http.HttpClient;
 import java.time.Duration;
 
 /**
@@ -58,15 +54,11 @@ public class ChatModelConfig {
     @Value("${gemini.max-retries:2}")
     private Integer maxRetries;
 
-    /** Empty means "use the JVM's default proxy selector". */
-    @Value("${gemini.proxy-host:}")
-    private String proxyHost;
-
-    @Value("${gemini.proxy-port:80}")
-    private Integer proxyPort;
-
     @Value("${gemini.timeout-seconds:60}")
     private Integer timeoutSeconds;
+
+    /** Shared with the embedding model: both need the same proxy and timeouts. */
+    @Autowired private GeminiHttpClientFactory httpClients;
 
     /**
      * How to handle Gemini's "thinking" on tool calls: {@code preserve} or {@code off}.
@@ -90,9 +82,7 @@ public class ChatModelConfig {
     @Primary
     public ChatModel chatModel() {
         System.out.println("[ChatModelConfig] Provider=Google Gemini (native API), model=" + modelName);
-        System.out.println("[ChatModelConfig] Proxy=" + (proxyHost.isBlank()
-                ? "JVM default selector (-Dhttps.proxyHost if set)"
-                : proxyHost + ":" + proxyPort));
+        System.out.println("[ChatModelConfig] Proxy=" + httpClients.describe());
         System.out.println("[ChatModelConfig] Thinking=" + thinkingMode);
         return build(0.1);
     }
@@ -116,7 +106,7 @@ public class ChatModelConfig {
                 .temperature(temperature)
                 .maxRetries(maxRetries)
                 .timeout(Duration.ofSeconds(timeoutSeconds))
-                .httpClientBuilder(proxyAwareHttpClientBuilder());
+                .httpClientBuilder(httpClients.create());
 
         if ("off".equalsIgnoreCase(thinkingMode)) {
             builder.thinkingConfig(GeminiThinkingConfig.builder()
@@ -136,16 +126,4 @@ public class ChatModelConfig {
         return builder.build();
     }
 
-    private HttpClientBuilder proxyAwareHttpClientBuilder() {
-        ProxySelector selector = proxyHost.isBlank()
-                ? ProxySelector.getDefault()
-                : ProxySelector.of(new InetSocketAddress(proxyHost, proxyPort));
-
-        HttpClient.Builder jdkBuilder = HttpClient.newBuilder().proxy(selector);
-
-        return new JdkHttpClientBuilder()
-                .httpClientBuilder(jdkBuilder)
-                .connectTimeout(Duration.ofSeconds(timeoutSeconds))
-                .readTimeout(Duration.ofSeconds(timeoutSeconds));
-    }
 }

@@ -74,7 +74,22 @@ public class KnowledgeIngestionService {
                 if (trimmed.isEmpty()) continue;
 
                 TextSegment segment = TextSegment.from(trimmed);
-                Embedding embedding = embeddingModel.embed(segment).content();
+                Embedding embedding;
+                try {
+                    embedding = embeddingModel.embed(segment).content();
+                } catch (Exception e) {
+                    // Abort on the first failure instead of retrying 22 more times. Embedding
+                    // errors are almost always the same for every chunk — a blocked endpoint,
+                    // a bad key, no quota — so continuing only buries the cause under identical
+                    // stack traces and delays startup by the timeout times the chunk count.
+                    System.err.println("[KnowledgeIngestion] Embedding failed on chunk " + (stored + 1)
+                            + ": " + e.getMessage());
+                    System.err.println("[KnowledgeIngestion] Aborting ingestion. RAG will report the "
+                            + "knowledge base as unavailable; the rest of the app is unaffected.");
+                    System.err.println("[KnowledgeIngestion] If this is a connect timeout, the embedding "
+                            + "model is not reaching Google — check gemini.proxy-host.");
+                    return;
+                }
                 embeddingStore.add(embedding, segment);
                 stored++;
                 System.out.println("[KnowledgeIngestion] Embedded chunk " + stored + ": "

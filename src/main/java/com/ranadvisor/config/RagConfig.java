@@ -6,12 +6,20 @@ import dev.langchain4j.model.googleai.GoogleAiEmbeddingModel;
 import dev.langchain4j.store.embedding.EmbeddingStore;
 import dev.langchain4j.store.embedding.inmemory.InMemoryEmbeddingStore;
 import dev.langchain4j.store.embedding.pgvector.PgVectorEmbeddingStore;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 @Configuration
 public class RagConfig {
+
+    /**
+     * The embedding model needs exactly the same network configuration as the chat model.
+     * Omitting it made every embed() call go direct and time out behind the corporate
+     * proxy — 23 failures at startup and one per RAG lookup afterwards.
+     */
+    @Autowired private GeminiHttpClientFactory httpClients;
 
     @Bean
     public EmbeddingModel embeddingModel(
@@ -20,6 +28,7 @@ public class RagConfig {
         return GoogleAiEmbeddingModel.builder()
                 .apiKey(apiKey)
                 .modelName(embeddingModelName)
+                .httpClientBuilder(httpClients.create())
                 .build();
     }
 
